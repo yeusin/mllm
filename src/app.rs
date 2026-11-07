@@ -1099,9 +1099,7 @@ impl AppState {
         if let Some(target_role_agent) = extract_role_instruction_target(&msg.message) {
             // Role instructions must ONLY be delivered to the appropriate role agent
             for (idx, client) in self.clients.iter().enumerate() {
-                if (client.name.eq_ignore_ascii_case(&target_role_agent)
-                    || (client.name.eq_ignore_ascii_case("TechnicalWriter")
-                        && target_role_agent.eq_ignore_ascii_case("TechWriter")))
+                if client.name.eq_ignore_ascii_case(&target_role_agent)
                     && !client.name.eq_ignore_ascii_case(&msg.sender)
                 {
                     target_indices.push(idx);
@@ -1130,9 +1128,7 @@ impl AppState {
                         continue;
                     }
                     for (idx, client) in self.clients.iter().enumerate() {
-                        if (client.name.eq_ignore_ascii_case(mention)
-                            || (client.name.eq_ignore_ascii_case("TechnicalWriter")
-                                && mention.eq_ignore_ascii_case("TechWriter")))
+                        if client.name.eq_ignore_ascii_case(mention)
                             && !client.name.eq_ignore_ascii_case(&msg.sender)
                             && !target_indices.contains(&idx)
                         {
@@ -1451,32 +1447,34 @@ mod tests {
         let targets_rev = app.determine_target_clients(&role_inst_rev);
         assert_eq!(targets_rev, vec![1]); // Client 1 is Reviewer; Architect (0) is NOT targeted
 
-        // TechnicalWriter & alias TechWriter routing
+        // Canonical TechnicalWriter routing (case-insensitive matching strictly from config name field)
         let msg_tw = ChatMessage::new_user("@TechnicalWriter Document the system".to_string());
         assert_eq!(app.determine_target_clients(&msg_tw), vec![2]);
-        let msg_alias = ChatMessage::new_user("@TechWriter Document the system".to_string());
-        assert_eq!(app.determine_target_clients(&msg_alias), vec![2]);
-
-        // Case variations: lowercase alias and uppercase canonical name
-        let msg_lower_alias =
-            ChatMessage::new_user("@techwriter Document the system".to_string());
-        assert_eq!(app.determine_target_clients(&msg_lower_alias), vec![2]);
+        let msg_lower = ChatMessage::new_user("@technicalwriter Document the system".to_string());
+        assert_eq!(app.determine_target_clients(&msg_lower), vec![2]);
         let msg_upper = ChatMessage::new_user("@TECHNICALWRITER Document the system".to_string());
         assert_eq!(app.determine_target_clients(&msg_upper), vec![2]);
 
         // Multiline directive bullets with mixed-case mentions
         let msg_multi = ChatMessage::new_user(
-            "Audit summary:\n- To @techwriter: update the API reference\n- @REVIEWER: verify coverage".to_string(),
+            "Audit summary:\n- To @technicalwriter: update the API reference\n- @REVIEWER: verify coverage".to_string(),
         );
         let targets_multi = app.determine_target_clients(&msg_multi);
         assert!(targets_multi.contains(&1) && targets_multi.contains(&2));
 
-        // Role instruction header with lowercase alias
-        let role_inst_alias = ChatMessage::new_coordinator(
-            "@techwriter [Role Instructions: Technical Writer]".to_string(),
+        // Role instruction header with canonical name
+        let role_inst_canonical = ChatMessage::new_coordinator(
+            "@technicalwriter [Role Instructions: Technical Writer]".to_string(),
             None,
         );
-        assert_eq!(app.determine_target_clients(&role_inst_alias), vec![2]);
+        assert_eq!(app.determine_target_clients(&role_inst_canonical), vec![2]);
+
+        // Non-config aliases are NOT hardcoded and do not resolve directly
+        let msg_unconfigured = ChatMessage::new_coordinator(
+            "@TechWriter Update documentation".to_string(),
+            None,
+        );
+        assert_eq!(app.determine_target_clients(&msg_unconfigured), Vec::<usize>::new());
 
         // 7. Chain depth limit at 100
         assert_eq!(app.max_chain_depth, 100);

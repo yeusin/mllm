@@ -299,7 +299,7 @@ pub fn sender_palette(sender: &str) -> (Color, &'static str) {
         "Architect" => (Color::Cyan, "◆"),
         "Reviewer" => (Color::Yellow, "▲"),
         "Researcher" => (Color::LightBlue, "■"),
-        "TechnicalWriter" | "TechWriter" | "Copywriter" => (Color::LightRed, "✦"),
+        "TechnicalWriter" | "Copywriter" => (Color::LightRed, "✦"),
         "Designer" => (Color::LightMagenta, "★"),
         "Marketer" => (Color::LightGreen, "⯈"),
         _ => {
@@ -1293,7 +1293,6 @@ mod tests {
             ("Reviewer", Color::Yellow, "▲"),
             ("Researcher", Color::LightBlue, "■"),
             ("TechnicalWriter", Color::LightRed, "✦"),
-            ("TechWriter", Color::LightRed, "✦"),
             ("Copywriter", Color::LightRed, "✦"),
             ("Designer", Color::LightMagenta, "★"),
             ("Marketer", Color::LightGreen, "⯈"),
@@ -1535,5 +1534,115 @@ mod tests {
         assert!(rendered_text.contains("Reviewer"));
         assert!(rendered_text.contains("THINKING"));
         assert!(rendered_text.contains("Generating response..."));
+    }
+
+    #[test]
+    fn test_composer_tab_title_clipping_narrow_terminal() {
+        use crate::app::TabCompletionState;
+        use crate::config::{parse_prefix_key, AppConfig};
+        use std::collections::{HashMap, HashSet};
+        use std::path::PathBuf;
+
+        let mut app = AppState {
+            config: AppConfig {
+                chat_file: "test.jsonl".to_string(),
+                prefix_key: "ctrl+b".to_string(),
+                general_instructions: String::new(),
+                clients: vec![],
+            },
+            parsed_prefix: parse_prefix_key("ctrl+b"),
+            active_pane: 0,
+            prefix_active: false,
+            input_focused: true,
+            composer_input: "@".to_string(),
+            cursor_pos: 1,
+            chat_history: vec![],
+            known_message_ids: HashSet::new(),
+            initial_message_ids: HashSet::new(),
+            clients: vec![],
+            active_chain_depth: 0,
+            max_chain_depth: 100,
+            chat_file_path: PathBuf::from("test.jsonl"),
+            pty_dimensions: HashMap::new(),
+            collaborative_next_idx: 0,
+            tab_completion: Some(TabCompletionState {
+                original_prefix: String::new(),
+                at_index: 0,
+                matches: vec![
+                    "Architect".to_string(),
+                    "Reviewer".to_string(),
+                    "TechnicalWriter".to_string(),
+                    "Designer".to_string(),
+                    "Marketer".to_string(),
+                    "Researcher".to_string(),
+                    "all".to_string(),
+                ],
+                current_idx: 0,
+                last_replaced_len: 0,
+            }),
+            initialized_clients: HashSet::new(),
+            mouse_selection: None,
+            pane_bounds: HashMap::new(),
+            chat_scroll_offset: 0,
+            pane_scroll_offsets: HashMap::new(),
+            last_chat_offset: 0,
+            coordinator_buffer: Vec::new(),
+            clipboard: None,
+            active_tasks: HashMap::new(),
+        };
+
+        let render = |app: &mut AppState| -> Vec<String> {
+            let backend = TestBackend::new(80, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| {
+                    let area = Rect::new(0, 0, 80, 24);
+                    render_coordinator_pane(f, app, area);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                        .collect::<String>()
+                })
+                .collect()
+        };
+
+        // Active tab completion: canonical name in list, alias never injected
+        let rows = render(&mut app);
+        let content: String = rows.join("\n");
+        assert!(
+            content.contains("@TechnicalWriter"),
+            "canonical name must appear in the tab list"
+        );
+        assert!(
+            !content.contains("@TechWriter"),
+            "alias must not appear as a completion candidate"
+        );
+
+        // No wrap/corruption: title row keeps a right-border corner at column 79
+        let title_y = rows
+            .iter()
+            .position(|r| r.contains("Composer Input"))
+            .expect("composer title row must render");
+        let title_row = &rows[title_y];
+        let last = title_row.chars().last().unwrap();
+        assert!(
+            title_row.ends_with("┐│") || title_row.ends_with("┤│"),
+            "composer corner + pane border must remain intact; got '{last}'; row: {title_row}"
+        );
+
+        // Trailing hint clipped on 80-col terminal during active completion
+        assert!(
+            !content.contains("Shift+Enter"),
+            "hint must be clipped while the tab list is active"
+        );
+
+        // Completion cleared: full hint visible again
+        app.tab_completion = None;
+        let rows_after = render(&mut app);
+        assert!(rows_after.join("\n").contains("Shift+Enter"));
     }
 }
