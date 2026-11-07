@@ -299,7 +299,7 @@ pub fn sender_palette(sender: &str) -> (Color, &'static str) {
         "Architect" => (Color::Cyan, "◆"),
         "Reviewer" => (Color::Yellow, "▲"),
         "Researcher" => (Color::LightBlue, "■"),
-        "Copywriter" => (Color::LightRed, "✦"),
+        "TechnicalWriter" | "TechWriter" | "Copywriter" => (Color::LightRed, "✦"),
         "Designer" => (Color::LightMagenta, "★"),
         "Marketer" => (Color::LightGreen, "⯈"),
         _ => {
@@ -1292,6 +1292,8 @@ mod tests {
             ("Architect", Color::Cyan, "◆"),
             ("Reviewer", Color::Yellow, "▲"),
             ("Researcher", Color::LightBlue, "■"),
+            ("TechnicalWriter", Color::LightRed, "✦"),
+            ("TechWriter", Color::LightRed, "✦"),
             ("Copywriter", Color::LightRed, "✦"),
             ("Designer", Color::LightMagenta, "★"),
             ("Marketer", Color::LightGreen, "⯈"),

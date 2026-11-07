@@ -1099,7 +1099,9 @@ impl AppState {
         if let Some(target_role_agent) = extract_role_instruction_target(&msg.message) {
             // Role instructions must ONLY be delivered to the appropriate role agent
             for (idx, client) in self.clients.iter().enumerate() {
-                if client.name.eq_ignore_ascii_case(&target_role_agent)
+                if (client.name.eq_ignore_ascii_case(&target_role_agent)
+                    || (client.name.eq_ignore_ascii_case("TechnicalWriter")
+                        && target_role_agent.eq_ignore_ascii_case("TechWriter")))
                     && !client.name.eq_ignore_ascii_case(&msg.sender)
                 {
                     target_indices.push(idx);
@@ -1128,7 +1130,9 @@ impl AppState {
                         continue;
                     }
                     for (idx, client) in self.clients.iter().enumerate() {
-                        if client.name.eq_ignore_ascii_case(mention)
+                        if (client.name.eq_ignore_ascii_case(mention)
+                            || (client.name.eq_ignore_ascii_case("TechnicalWriter")
+                                && mention.eq_ignore_ascii_case("TechWriter")))
                             && !client.name.eq_ignore_ascii_case(&msg.sender)
                             && !target_indices.contains(&idx)
                         {
@@ -1389,6 +1393,14 @@ mod tests {
                     instructions: "Review".to_string(),
                     extra_args: vec![],
                 },
+                crate::config::ClientConfig {
+                    number: 3,
+                    name: "TechnicalWriter".to_string(),
+                    role: "Technical Writer".to_string(),
+                    command: "cat".to_string(),
+                    instructions: "Docs".to_string(),
+                    extra_args: vec![],
+                },
             ],
         };
 
@@ -1415,7 +1427,7 @@ mod tests {
         let msg_fallback = ChatMessage::new_user("No mention here".to_string());
         app.route_message(&msg_fallback);
         assert_eq!(app.active_chain_depth, 4);
-        assert_eq!(app.collaborative_next_idx, 0);
+        assert_eq!(app.collaborative_next_idx, 2);
 
         // 5. Loop prevention: Coordinator messages do not trigger turns
         let msg_coord = ChatMessage::new_coordinator("Status announcement".to_string(), None);
@@ -1438,6 +1450,12 @@ mod tests {
         );
         let targets_rev = app.determine_target_clients(&role_inst_rev);
         assert_eq!(targets_rev, vec![1]); // Client 1 is Reviewer; Architect (0) is NOT targeted
+
+        // TechnicalWriter & alias TechWriter routing
+        let msg_tw = ChatMessage::new_user("@TechnicalWriter Document the system".to_string());
+        assert_eq!(app.determine_target_clients(&msg_tw), vec![2]);
+        let msg_alias = ChatMessage::new_user("@TechWriter Document the system".to_string());
+        assert_eq!(app.determine_target_clients(&msg_alias), vec![2]);
 
         // 7. Chain depth limit at 100
         assert_eq!(app.max_chain_depth, 100);

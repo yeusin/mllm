@@ -201,12 +201,13 @@ Direct compliance and security findings to @Reviewer in the shared log.
             },
             ClientConfig {
                 number: 4,
-                name: "Copywriter".to_string(),
-                role: "Content Strategist & Copywriter".to_string(),
+                name: "TechnicalWriter".to_string(),
+                role: "Technical Writer".to_string(),
                 command: "agy".to_string(),
-                instructions: r#"Develop product narratives, landing page copy, value propositions, and social campaigns.
-Direct visual layout and mockup requests to @Designer.
-Direct audience targeting and conversion queries to @Marketer.
+                instructions: r#"Author and maintain technical documentation, specifications, user guides, API docs, and release notes.
+Ensure clarity, accuracy, completeness, and structured formatting across all project documentation.
+Direct architectural clarification requests to @Architect in the shared log.
+Direct accuracy and implementation verification queries to @Reviewer in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },
@@ -216,7 +217,7 @@ Direct audience targeting and conversion queries to @Marketer.
                 role: "Brand & UI/UX Designer".to_string(),
                 command: "agy".to_string(),
                 instructions: r#"Create design system components, wireframes, user journeys, and visual layouts.
-Direct copy and headline alignment requests to @Copywriter.
+Direct documentation layout and copy alignment requests to @TechnicalWriter.
 Direct campaign asset specifications to @Marketer.
 "#.to_string(),
                 extra_args: Vec::new(),
@@ -227,7 +228,7 @@ Direct campaign asset specifications to @Marketer.
                 role: "Growth & Campaign Specialist".to_string(),
                 command: "agy".to_string(),
                 instructions: r#"Evaluate user acquisition channels, audience segmentation, conversion funnels, and KPIs.
-Direct narrative and messaging adjustments to @Copywriter.
+Direct technical content and messaging adjustments to @TechnicalWriter.
 Direct banner, landing page, and visual requirements to @Designer.
 "#.to_string(),
                 extra_args: Vec::new(),

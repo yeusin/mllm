@@ -1077,7 +1077,7 @@ fn test_init_command_interactive_role_assignment() {
     // Role 1 (Architect): claude
     // Role 2 (Reviewer): codex
     // Role 3 (Researcher): opencode
-    // Role 4 (Copywriter): agy
+    // Role 4 (TechnicalWriter): agy
     // Role 5 (Designer): claude
     // Role 6 (Marketer): codex
     let mut user_inputs = "claude\ncodex\nopencode\nagy\nclaude\ncodex\n".as_bytes();

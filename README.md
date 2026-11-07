@@ -12,8 +12,8 @@ Multi-LLM is a Rust-based terminal multiplexer and multi-agent orchestration TUI
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                                 Multi-LLM TUI                                    │
 ├──────────────────────────┬───────────────────────────┬───────────────────────────┤
-│  Pane 1: Architect       │  Pane 0: Coordinator Chat │  Pane 4: Copywriter       │
-│  [Role: Lead Architect]  │  [Role: Coordinator]      │  [Content Strategist]     │
+│  Pane 1: Architect       │  Pane 0: Coordinator Chat │  Pane 4: TechnicalWriter  │
+│  [Role: Lead Architect]  │  [Role: Coordinator]      │  [Technical Writer]       │
 │  (PTY: agy)              │  (Shared JSONL Stream)    │  (PTY: agy)               │
 │                          │                           │                           │
 │  > Bracketed paste prompt│  [#e1a2] User: Build feature├───────────────────────────┤
@@ -123,13 +123,14 @@ clients:
       Direct compliance and security findings to @Reviewer in the shared log.
 
   - number: 4
-    name: Copywriter
-    role: Content Strategist & Copywriter
+    name: TechnicalWriter
+    role: Technical Writer
     command: agy --dangerously-skip-permissions
     instructions: |
-      Develop product narratives, landing page copy, value propositions, and social campaigns.
-      Direct visual layout and mockup requests to @Designer.
-      Direct audience targeting and conversion queries to @Marketer.
+      Author and maintain technical documentation, specifications, user guides, API docs, and release notes.
+      Ensure clarity, accuracy, completeness, and structured formatting across all project documentation.
+      Direct architectural clarification requests to @Architect in the shared log.
+      Direct accuracy and implementation verification queries to @Reviewer in the shared log.
 
   - number: 5
     name: Designer
@@ -137,7 +138,7 @@ clients:
     command: agy --dangerously-skip-permissions
     instructions: |
       Create design system components, wireframes, user journeys, and visual layouts.
-      Direct copy and headline alignment requests to @Copywriter.
+      Direct documentation layout and copy alignment requests to @TechnicalWriter.
       Direct campaign asset specifications to @Marketer.
 
   - number: 6
@@ -146,7 +147,7 @@ clients:
     command: agy --dangerously-skip-permissions
     instructions: |
       Evaluate user acquisition channels, audience segmentation, conversion funnels, and KPIs.
-      Direct narrative and messaging adjustments to @Copywriter.
+      Direct technical content and messaging adjustments to @TechnicalWriter.
       Direct banner, landing page, and visual requirements to @Designer.
 ```
 
