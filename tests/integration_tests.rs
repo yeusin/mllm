@@ -1062,6 +1062,93 @@ async fn test_realtime_thinking_indicator_lifecycle() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+#[tokio::test]
+async fn test_multi_agent_individual_finish_immediate_display() {
+    use mllm::app::AppState;
+    use mllm::chat::ChatMessage;
+    use mllm::config::{AppConfig, ClientConfig};
+    use std::fs;
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_multi_agent_finish_{}", std::process::id()));
+    let _ = fs::create_dir_all(&tmp_dir);
+    let chat_file = tmp_dir.join("shared_chat.jsonl");
+
+    let config = AppConfig {
+        chat_file: "shared_chat.jsonl".to_string(),
+        prefix_key: "ctrl+b".to_string(),
+        general_instructions: "Protocol".to_string(),
+        clients: vec![
+            ClientConfig {
+                number: 1,
+                name: "Architect".to_string(),
+                role: "Lead Architect".to_string(),
+                command: "cat".to_string(),
+                instructions: "Lead".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 2,
+                name: "Reviewer".to_string(),
+                role: "Reviewer & Auditor".to_string(),
+                command: "cat".to_string(),
+                instructions: "Audit".to_string(),
+                extra_args: vec![],
+            },
+        ],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+
+    // Dispatch message mentioning both agents
+    let msg = ChatMessage::new_user("@Architect @Reviewer: Parallel evaluation".to_string());
+    app.route_message(&msg);
+
+    // Both agents are recorded as active tasks
+    assert!(app.active_tasks.contains_key("architect"));
+    assert!(app.active_tasks.contains_key("reviewer"));
+
+    // Architect finishes first and appends response to shared_chat.jsonl
+    let arch_reply = ChatMessage {
+        id: "arch-reply-1".to_string(),
+        reply_to: Some(msg.id.clone()),
+        sender: "Architect".to_string(),
+        role: "Lead Architect".to_string(),
+        message: "Architecture verified.".to_string(),
+        timestamp: 1794057100,
+    };
+    mllm::chat::append_message(&chat_file, &arch_reply).unwrap();
+
+    // Check updates: Architect's output is immediately visible in chat_history,
+    // Architect's active_task is cleared, but Reviewer is STILL active and thinking
+    app.check_chat_log_updates();
+    assert!(!app.active_tasks.contains_key("architect"));
+    assert!(app.active_tasks.contains_key("reviewer"));
+    assert!(app.chat_history.iter().any(|m| m.id == "arch-reply-1"));
+
+    // Later, Reviewer finishes and appends response
+    let rev_reply = ChatMessage {
+        id: "rev-reply-1".to_string(),
+        reply_to: Some(msg.id.clone()),
+        sender: "Reviewer".to_string(),
+        role: "Reviewer & Auditor".to_string(),
+        message: "Review complete. All clear.".to_string(),
+        timestamp: 1794057150,
+    };
+    mllm::chat::append_message(&chat_file, &rev_reply).unwrap();
+
+    // Check updates: Reviewer's output is now also in chat_history,
+    // and both active_tasks are now cleared
+    app.check_chat_log_updates();
+    assert!(!app.active_tasks.contains_key("reviewer"));
+    assert!(app.active_tasks.is_empty());
+    assert!(app.chat_history.iter().any(|m| m.id == "rev-reply-1"));
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
 #[test]
 fn test_init_command_interactive_role_assignment() {
     use mllm::config::{load_config, run_init, AVAILABLE_CLIENTS};

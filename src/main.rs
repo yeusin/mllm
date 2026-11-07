@@ -146,9 +146,12 @@ async fn main() -> Result<()> {
         }
     };
 
-    let mut poll_interval = tokio::time::interval(Duration::from_millis(200));
+    let mut poll_interval = tokio::time::interval(Duration::from_millis(50));
 
     loop {
+        // Ingest newly arrived chat log updates immediately before rendering
+        app.check_chat_log_updates();
+
         // Redraw UI
         terminal.draw(|f| ui::render(f, &mut app))?;
 
@@ -198,9 +201,7 @@ async fn main() -> Result<()> {
                 // Drain any additional queued PTY events before drawing
                 while event_rx.try_recv().is_ok() {}
             }
-            _ = poll_interval.tick() => {
-                app.check_chat_log_updates();
-            }
+            _ = poll_interval.tick() => {}
         }
     }
 }

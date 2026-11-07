@@ -1476,6 +1476,32 @@ mod tests {
         );
         assert_eq!(app.determine_target_clients(&msg_unconfigured), Vec::<usize>::new());
 
+        // Role instruction header with unconfigured alias resolves to zero targets, no panic
+        let role_inst_unconfigured = ChatMessage::new_coordinator(
+            "@TechWriter [Role Instructions: Technical Writer]".to_string(),
+            None,
+        );
+        assert_eq!(
+            app.determine_target_clients(&role_inst_unconfigured),
+            Vec::<usize>::new()
+        );
+
+        // User message with only an unconfigured alias falls back collaboratively (no panic)
+        app.collaborative_next_idx = 0;
+        let msg_user_alias =
+            ChatMessage::new_user("@TechWriter Update documentation".to_string());
+        assert_eq!(app.determine_target_clients(&msg_user_alias), vec![0]);
+        assert_eq!(app.collaborative_next_idx, 1);
+
+        // Mixed mention: unconfigured alias mid-sentence ignored (per protocol),
+        // leading configured peer routes, fallback not consumed
+        app.collaborative_next_idx = 0;
+        let msg_mixed = ChatMessage::new_user(
+            "@Reviewer and @TechWriter please coordinate".to_string(),
+        );
+        assert_eq!(app.determine_target_clients(&msg_mixed), vec![1]);
+        assert_eq!(app.collaborative_next_idx, 0);
+
         // 7. Chain depth limit at 100
         assert_eq!(app.max_chain_depth, 100);
         app.active_chain_depth = 100;
