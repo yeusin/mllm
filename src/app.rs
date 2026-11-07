@@ -1457,6 +1457,27 @@ mod tests {
         let msg_alias = ChatMessage::new_user("@TechWriter Document the system".to_string());
         assert_eq!(app.determine_target_clients(&msg_alias), vec![2]);
 
+        // Case variations: lowercase alias and uppercase canonical name
+        let msg_lower_alias =
+            ChatMessage::new_user("@techwriter Document the system".to_string());
+        assert_eq!(app.determine_target_clients(&msg_lower_alias), vec![2]);
+        let msg_upper = ChatMessage::new_user("@TECHNICALWRITER Document the system".to_string());
+        assert_eq!(app.determine_target_clients(&msg_upper), vec![2]);
+
+        // Multiline directive bullets with mixed-case mentions
+        let msg_multi = ChatMessage::new_user(
+            "Audit summary:\n- To @techwriter: update the API reference\n- @REVIEWER: verify coverage".to_string(),
+        );
+        let targets_multi = app.determine_target_clients(&msg_multi);
+        assert!(targets_multi.contains(&1) && targets_multi.contains(&2));
+
+        // Role instruction header with lowercase alias
+        let role_inst_alias = ChatMessage::new_coordinator(
+            "@techwriter [Role Instructions: Technical Writer]".to_string(),
+            None,
+        );
+        assert_eq!(app.determine_target_clients(&role_inst_alias), vec![2]);
+
         // 7. Chain depth limit at 100
         assert_eq!(app.max_chain_depth, 100);
         app.active_chain_depth = 100;
