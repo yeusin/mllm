@@ -12,8 +12,6 @@ use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-static MENTION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^\s*@([a-zA-Z0-9_\-]+)").expect("Invalid mention regex"));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -211,6 +209,15 @@ static ROLE_INSTRUCTION_HEADER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Invalid role instruction header regex")
 });
 
+static LINE_MENTION_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(?:(?:[-*>]|\d+\.)\s*(?:to\s+)?)?((?:@[a-zA-Z0-9_\-]+[:,]?[ \t]*)+)")
+        .expect("Invalid line mention prefix regex")
+});
+
+static MENTION_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@([a-zA-Z0-9_\-]+)").expect("Invalid mention token regex")
+});
+
 pub fn extract_role_instruction_target(message: &str) -> Option<String> {
     ROLE_INSTRUCTION_HEADER_REGEX
         .captures(message)
@@ -219,22 +226,25 @@ pub fn extract_role_instruction_target(message: &str) -> Option<String> {
 }
 
 pub fn extract_mention_target(message: &str) -> Option<String> {
-    MENTION_REGEX
-        .captures(message)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().to_string())
+    extract_mentions(message).into_iter().next()
 }
 
 pub fn extract_mentions(message: &str) -> Vec<String> {
     let mut mentions = Vec::new();
-    for cap in MENTION_REGEX.captures_iter(message) {
-        if let Some(m) = cap.get(1) {
-            let name = m.as_str().to_string();
-            if !mentions
-                .iter()
-                .any(|existing: &String| existing.eq_ignore_ascii_case(&name))
-            {
-                mentions.push(name);
+    for line in message.lines() {
+        if let Some(caps) = LINE_MENTION_PREFIX_REGEX.captures(line) {
+            if let Some(prefix) = caps.get(1) {
+                for cap in MENTION_TOKEN_REGEX.captures_iter(prefix.as_str()) {
+                    if let Some(m) = cap.get(1) {
+                        let name = m.as_str().to_string();
+                        if !mentions
+                            .iter()
+                            .any(|existing: &String| existing.eq_ignore_ascii_case(&name))
+                        {
+                            mentions.push(name);
+                        }
+                    }
+                }
             }
         }
     }
@@ -320,6 +330,17 @@ mod tests {
         // Multiline mentions (each on its own line)
         let msg_multiline = "[Report]\nSome text\n@Reviewer please review\n@Researcher please benchmark";
         assert_eq!(extract_mentions(msg_multiline), vec!["Reviewer", "Researcher"]);
+
+        // Multiple consecutive mentions on the same leading line
+        let msg_same_line = "@User @Reviewer @Researcher Interactive init command";
+        assert_eq!(extract_mentions(msg_same_line), vec!["User", "Reviewer", "Researcher"]);
+
+        // Markdown list directives
+        let msg_directives = "2. Directives to Peers:\n   - To @Reviewer: Audit input sanitization\n   - To @Researcher: Benchmark setup";
+        assert_eq!(extract_mentions(msg_directives), vec!["Reviewer", "Researcher"]);
+
+        let msg_bullet = "- @Reviewer: please check\n* @Researcher: please bench";
+        assert_eq!(extract_mentions(msg_bullet), vec!["Reviewer", "Researcher"]);
 
         // Invalid mentions or empty
         assert_eq!(extract_mentions(""), Vec::<String>::new());

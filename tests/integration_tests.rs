@@ -354,6 +354,81 @@ async fn test_multiline_multiple_peer_mentions_routing() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+#[tokio::test]
+async fn test_peer_consecutive_and_directive_mentions_routing() {
+    use mllm::app::AppState;
+    use mllm::chat::ChatMessage;
+    use mllm::config::{AppConfig, ClientConfig};
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_mllm_consecutive_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+
+    let config = AppConfig {
+        chat_file: "test_chat.jsonl".to_string(),
+        prefix_key: "ctrl+b".to_string(),
+        general_instructions: "".to_string(),
+        clients: vec![
+            ClientConfig {
+                number: 1,
+                name: "Architect".to_string(),
+                role: "Lead Architect".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 2,
+                name: "Reviewer".to_string(),
+                role: "Reviewer".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 3,
+                name: "Researcher".to_string(),
+                role: "Researcher".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+        ],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+
+    // Case 1: Multiple leading mentions on the same line with @User
+    let mut msg1 = ChatMessage::new_user(
+        "@User @Reviewer @Researcher Interactive `init` command implemented and verified".to_string(),
+    );
+    msg1.sender = "Architect".to_string();
+    msg1.role = "Lead Architect".to_string();
+
+    let targets1 = app.determine_target_clients(&msg1);
+    // Architect is excluded (sender), User is filtered out (human), Reviewer (idx 1) and Researcher (idx 2) are targeted
+    assert_eq!(targets1, vec![1, 2]);
+
+    // Case 2: Directives listed in markdown bullet points
+    let mut msg2 = ChatMessage::new_user(
+        "Directives to Peers:\n  - To @Reviewer: Audit input sanitization\n  - To @Researcher: Benchmark setup".to_string(),
+    );
+    msg2.sender = "Architect".to_string();
+    let targets2 = app.determine_target_clients(&msg2);
+    assert_eq!(targets2, vec![1, 2]);
+
+    // Case 3: User forwarding the same message
+    let msg3 = ChatMessage::new_user(
+        "@User @Reviewer @Researcher Interactive `init` command implemented and verified".to_string(),
+    );
+    let targets3 = app.determine_target_clients(&msg3);
+    assert_eq!(targets3, vec![1, 2]);
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
 
 #[tokio::test]
 async fn test_role_instructions_isolated_routing() {

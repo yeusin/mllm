@@ -1121,6 +1121,12 @@ impl AppState {
                 }
             } else if !mentions.is_empty() {
                 for mention in &mentions {
+                    if mention.eq_ignore_ascii_case("User")
+                        || mention.eq_ignore_ascii_case("Coordinator")
+                        || mention.eq_ignore_ascii_case("System")
+                    {
+                        continue;
+                    }
                     for (idx, client) in self.clients.iter().enumerate() {
                         if client.name.eq_ignore_ascii_case(mention)
                             && !client.name.eq_ignore_ascii_case(&msg.sender)
@@ -1131,8 +1137,10 @@ impl AppState {
                         }
                     }
                 }
-            } else if msg.sender == "User" {
-                // Collaborative Fallback Mode: no mention in user input
+            }
+
+            if target_indices.is_empty() && msg.sender == "User" {
+                // Collaborative Fallback Mode: no agent targeted in user input
                 if !self.clients.is_empty() {
                     let target = self.collaborative_next_idx % self.clients.len();
                     target_indices.push(target);
