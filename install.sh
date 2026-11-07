@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 # Multi-LLM (mllm) Installation Script
 # Supports Linux and macOS (x86_64, aarch64 / Apple Silicon)
+#
+# Threat Model Note:
+# Checksum verification provides transport integrity and corruption detection against
+# the official GitHub release assets. Archive extraction occurs unprivileged within an
+# isolated temporary directory prior to installing the binary.
 
 set -eu
 
@@ -104,7 +109,8 @@ TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'mllm_install')"
 cleanup() {
   rm -rf "$TMP_DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 1' INT TERM
 
 download() {
   _url="$1"
@@ -125,8 +131,33 @@ compute_sha256() {
     sha256sum "$_file" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$_file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$_file" | awk '{print $NF}'
   else
     return 1
+  fi
+}
+
+verify_checksum() {
+  _archive="$1"
+  _checksum_url="$2"
+  _checksum_file="$TMP_DIR/checksum.sha256"
+
+  if download "$_checksum_url" "$_checksum_file" 2>/dev/null; then
+    EXPECTED_HASH="$(awk '{print $1}' "$_checksum_file")"
+    if ACTUAL_HASH="$(compute_sha256 "$_archive")"; then
+      if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+        echo "Error: SHA-256 checksum verification failed." >&2
+        echo "Expected: $EXPECTED_HASH" >&2
+        echo "Actual:   $ACTUAL_HASH" >&2
+        exit 1
+      fi
+      echo "Checksum verified: SHA-256 matches ($ACTUAL_HASH)."
+    else
+      echo "Warning: No sha256 tool found; skipping checksum verification." >&2
+    fi
+  else
+    echo "Warning: Checksum file unavailable at $_checksum_url; skipping checksum verification." >&2
   fi
 }
 
@@ -147,20 +178,7 @@ if [ "$LOCAL_BUILD" -eq 0 ]; then
 
   echo "Attempting to download mllm (${TARGET}) from GitHub releases..."
   if download "$DOWNLOAD_URL" "$TMP_DIR/mllm.tar.gz" 2>/dev/null; then
-    # Verify SHA-256 checksum if checksum file exists
-    if download "$CHECKSUM_URL" "$TMP_DIR/mllm.tar.gz.sha256" 2>/dev/null; then
-      EXPECTED_HASH="$(awk '{print $1}' "$TMP_DIR/mllm.tar.gz.sha256")"
-      if ACTUAL_HASH="$(compute_sha256 "$TMP_DIR/mllm.tar.gz")"; then
-        if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
-          echo "Error: SHA-256 checksum verification failed." >&2
-          echo "Expected: $EXPECTED_HASH" >&2
-          echo "Actual:   $ACTUAL_HASH" >&2
-          exit 1
-        fi
-        echo "Checksum verified: SHA-256 matches ($ACTUAL_HASH)."
-      fi
-    fi
-
+    verify_checksum "$TMP_DIR/mllm.tar.gz" "$CHECKSUM_URL"
     tar -xzf "$TMP_DIR/mllm.tar.gz" -C "$TMP_DIR"
     EXTRACTED_BIN="$(find "$TMP_DIR" -type f -name mllm | head -n 1)"
     if [ -n "$EXTRACTED_BIN" ] && [ -f "$EXTRACTED_BIN" ]; then
@@ -174,6 +192,7 @@ if [ "$LOCAL_BUILD" -eq 0 ]; then
         UNIVERSAL_URL="${BASE_URL}/download/${TAG}/mllm-universal-apple-darwin.tar.gz"
       fi
       if download "$UNIVERSAL_URL" "$TMP_DIR/mllm.tar.gz" 2>/dev/null; then
+        verify_checksum "$TMP_DIR/mllm.tar.gz" "${UNIVERSAL_URL}.sha256"
         tar -xzf "$TMP_DIR/mllm.tar.gz" -C "$TMP_DIR"
         EXTRACTED_BIN="$(find "$TMP_DIR" -type f -name mllm | head -n 1)"
         if [ -n "$EXTRACTED_BIN" ] && [ -f "$EXTRACTED_BIN" ]; then
@@ -184,11 +203,20 @@ if [ "$LOCAL_BUILD" -eq 0 ]; then
   fi
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo ".")"
+
 # Fallback: local release binary or cargo build if remote download is unavailable
 if [ -z "$BINARY" ]; then
-  if [ -f "./target/release/mllm" ]; then
+  if [ -f "${SCRIPT_DIR}/target/release/mllm" ]; then
+    echo "Notice: Pre-built release not found online. Using existing local binary '${SCRIPT_DIR}/target/release/mllm'."
+    BINARY="${SCRIPT_DIR}/target/release/mllm"
+  elif [ -f "./target/release/mllm" ]; then
     echo "Notice: Pre-built release not found online. Using existing local binary './target/release/mllm'."
     BINARY="./target/release/mllm"
+  elif [ -f "${SCRIPT_DIR}/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+    echo "Notice: Pre-built release not found online. Compiling from local repository using cargo..."
+    (cd "$SCRIPT_DIR" && cargo build --release)
+    BINARY="${SCRIPT_DIR}/target/release/mllm"
   elif [ -f "./Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
     echo "Notice: Pre-built release not found online. Compiling from local repository using cargo..."
     cargo build --release
