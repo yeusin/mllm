@@ -476,7 +476,19 @@ Unlike traditional Rust update mechanisms that embed heavy crates (`self_update`
 - **Hardened Multi-User Staging**: Unpacks archives within a private temporary directory restricted to `0700` permissions (`DirBuilderExt::mode(0o700)`) to mitigate multi-user `/tmp` snooping or tampering.
 - **Payload & Archive Hardening**: Ensures extracted binary is a regular file (`is_file()`, rejecting symlinks and directories) and extracts archives using `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards under `sudo`.
 - **Atomic In-Place Replacement & Fsync Durability**: Stages the binary into `.mllm-update-<uuid>.tmp` within the same target directory, applies `0755` permissions, flushes disk buffers via `sync_all()` (`fsync`) to prevent power-loss truncation, and executes an atomic POSIX `rename(2)` to overwrite the target executable cleanly without `ETXTBSY` lockouts.
-- **Semantic Versioning & Early Validation**: Rejects invalid version strings or directory targets early, and surfaces clear downgrade notices when switching to older releases.
+- **Semantic Versioning & Intentional Downgrades**: Rejects invalid version strings or directory targets early. Downgrading to an older version (e.g. rollback to `v0.1.0`) is supported as an intentional resiliency feature: `mllm update` prints an explicit warning notice and proceeds unblocked.
+
+#### Trust Model & Supply-Chain Attestation (v0.2.1+)
+- **Transport Integrity vs Compromise**: Built-in SHA-256 checksum verification guards against network transmission errors and corrupted downloads. Checksums are hosted alongside release archives and do not guard against upstream repository or release-pipeline compromise. Release v0.2.0 and earlier do not contain embedded cryptographic signatures.
+- **Cryptographic SLSA Build Provenance**: Starting with release **v0.2.1**, Multi-LLM introduces Sigstore-backed GitHub Artifact Attestations (`actions/attest-build-provenance`).
+  - **Non-Retroactivity Boundary**: Cryptographic SLSA attestations apply starting with **v0.2.1**; v0.2.0 and prior releases rely strictly on published SHA-256 transport checksums.
+  - **Out-of-Band Verification (`gh >= 2.43`)**:
+    ```bash
+    gh attestation verify mllm-<target>.tar.gz \
+      --repo yeusin/mllm \
+      --signer-workflow .github/workflows/release.yml
+    ```
+  - **Zero-Bloat Footprint Boundary**: Delegating attestation verification out-of-band to `gh` preserves `mllm`'s 0-dependency runtime footprint (<17 KB `.text`, <5 MB RSS) without embedding heavy Sigstore or OpenSSL dependencies.
 
 For in-depth operational instructions, refer to the [User Guide](docs/USER_GUIDE.md) and [Release Notes](RELEASE_NOTES.md).
 

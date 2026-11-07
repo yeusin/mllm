@@ -15,11 +15,11 @@ Multi-LLM v0.2.0 is a major milestone release focusing on seamless application l
 ### Highlights & Key Features
 
 #### 1. Native Self-Update Command (`mllm update`)
-Multi-LLM now provides a built-in, unassisted upgrade mechanism that automatically discovers the host target architecture, queries GitHub Releases for the latest or specified version, validates cryptographic integrity via SHA-256 checksums, and safely replaces the running executable in place.
+Multi-LLM now provides a built-in, unassisted upgrade mechanism that automatically discovers the host target architecture, queries GitHub Releases for the latest or specified version, validates transport integrity via SHA-256 checksums, and safely replaces the running executable in place.
 
 - **Zero-Bloat Subprocess Architecture**: Avoids adding heavy runtime networking or cryptographic dependencies (`reqwest`, `hyper`, `rustls`, `ring`, or `self_update`). Subprocess orchestration via native OS utilities (`curl`/`wget`, `tar`, `sha256sum`/`shasum`/`openssl`) preserves lightweight binary footprint (~16.5 KB compiled text footprint, ~0.3% of total binary size) and maintains sub-6-second release compile times.
 - **Atomic In-Place Replacement**: Eliminates Unix `ETXTBSY` (Text file busy) execution lockups by staging the downloaded executable into `.mllm-update-<uuid>.tmp` within the same target directory, applying `0755` executable permissions, executing `sync_all()` (`fsync`) for disk durability, and performing an atomic POSIX `rename(2)` over the target path.
-- **Fail-Closed SHA-256 Checksum Verification**: Mandates cryptographic hash verification before extracting any archive. Automatically checks primary and fallback checksum URL naming conventions (`mllm-<target>.sha256` and `mllm-<target>.tar.gz.sha256`). Mismatched or unretrievable checksums halt immediately before altering files.
+- **Fail-Closed SHA-256 Checksum Verification**: Mandates transport checksum verification before extracting any archive. Automatically checks primary and fallback checksum URL naming conventions (`mllm-<target>.sha256` and `mllm-<target>.tar.gz.sha256`). Mismatched or unretrievable checksums halt immediately before altering files.
 - **Hardened Multi-User Staging**: Extracts archives into a private temporary directory restricted to `0700` (`DirBuilderExt::mode(0o700)`) and invokes `tar` with `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards during `sudo` upgrades. Extracted payloads are validated as non-symlink regular files.
 - **Flexible CLI Controls**:
   - `mllm update --check` (`-c`): Inspect available updates against the local version without downloading or writing files.
@@ -27,7 +27,7 @@ Multi-LLM now provides a built-in, unassisted upgrade mechanism that automatical
   - `mllm update --force` (`-f`): Force reinstallation or binary refresh of the current version.
   - `mllm update --dry-run`: Preview resolved platform target, download URLs, checksum URLs, and atomic replacement targets without filesystem side-effects.
   - `mllm update --target <PATH>` (`-t`): Explicitly target user-local installations (e.g. `~/.local/bin/mllm`) or system paths (`/usr/local/bin/mllm`).
-- **Downgrade Notices & Semantic Versioning**: Validates version strings against semantic versioning schemas and explicitly issues a downgrade confirmation notice when targeting older releases.
+- **Intentional Downgrade Support & Semantic Versioning**: Validates version strings against semantic versioning schemas. If an operator requests an older release (e.g. rollback to `v0.1.0`), `mllm update` prints an explicit warning notice (`Notice: Target version ... is older than current version ... (downgrade)`) while keeping execution unblocked.
 
 #### 2. Dynamic Instruction Template Variables
 Configuration preambles and role instructions now support dynamic placeholders that are interpolated during runtime execution. This ensures agent system prompts always reflect runtime settings without hardcoded path or configuration duplication.
@@ -68,10 +68,13 @@ Previous versions broadcast startup instructions directly into `shared_chat.json
 | :--- | :--- |
 | **Atomic File Replacement** | POSIX `rename(2)` from `.mllm-update-<uuid>.tmp` guarantees that the running executable is never truncated while active (`ETXTBSY` avoidance). |
 | **Disk Durability** | Staged binaries invoke `fsync` (`sync_all()`) before replacement, protecting against power-loss corruption. |
-| **Checksum Enforcement** | SHA-256 hash calculation occurs before decompression; missing or diverging checksums halt execution with non-zero exit codes. |
+| **Transport Integrity** | SHA-256 hash calculation occurs before decompression; missing or diverging checksums halt execution with non-zero exit codes. Checksums protect against network/download corruption, not upstream infrastructure compromise. |
 | **Temporary Staging Sandbox** | Temporary directories use `0700` mode, preventing multi-user `/tmp` race conditions or symbolic link hijacks. |
 | **Extraction Hardening** | Invocations of `tar` enforce `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards when running under `sudo`. |
 | **Subprocess Efficiency** | Memory consumption during updates remains under **5 MB peak RSS**, eliminating OpenSSL runtime linking conflicts. |
+
+> [!NOTE]
+> Releases in v0.2.0 and prior rely strictly on published SHA-256 transport checksums and are unsigned. Cryptographic build provenance attestations are introduced in v0.2.1.
 
 ---
 
@@ -126,6 +129,27 @@ cd mllm
 git checkout v0.2.0
 cargo install --path .
 ```
+
+---
+
+## Upcoming v0.2.1 Supply-Chain & Hardening Roadmap
+
+The upcoming **v0.2.1** release introduces cryptographic supply-chain attestations and deepened staging isolation:
+
+1. **Cryptographic SLSA Build Provenance Attestations**:
+   - Integration with GitHub Artifact Attestations (`actions/attest-build-provenance@v2`) generating Sigstore-backed DSSE/in-toto SLSA v1.0 provenance for all release artifacts.
+   - **Non-Retroactivity Boundary**: SLSA attestations apply exclusively starting with **v0.2.1**; v0.2.0 and prior releases rely strictly on published SHA-256 checksums.
+   - **Verification Workflow (`gh >= 2.43`)**:
+     ```bash
+     gh attestation verify mllm-<target>.tar.gz \
+       --repo yeusin/mllm \
+       --signer-workflow .github/workflows/release.yml
+     ```
+   - **Zero Added Footprint**: Attestation verification runs out-of-band via GitHub CLI, keeping `mllm` at 0 added dependencies and ~16.5 KB `.text` footprint.
+2. **File Staging Hardening**:
+   - Upgrading `.mllm-update-<uuid>.tmp` creation to `std::fs::File::create_new` (`O_CREAT | O_EXCL`) via `OpenOptionsExt`, reinforcing atomic replacement against pre-existing symlinks or concurrent collisions.
+3. **Action Commit SHA Pinning**:
+   - Pinning all GitHub Action references in `.github/workflows/release.yml` to full 40-character hex commit hashes with semantic version annotations.
 
 ---
 

@@ -13,6 +13,8 @@ Welcome to the comprehensive user guide for **Multi-LLM (`mllm`)**, a high-perfo
    - [Automated Quick Install](#automated-quick-install)
    - [Building from Source](#building-from-source)
    - [In-Place Upgrades with `mllm update`](#in-place-upgrades-with-mllm-update)
+   - [Rollback Semantics & Downgrades](#rollback-semantics--downgrades)
+   - [Security, Trust Model & Supply-Chain Attestation](#security-trust-model--supply-chain-attestation)
    - [Managing Permissions & Non-Root Upgrades](#managing-permissions--non-root-upgrades)
 3. [Configuration Specification (`mllm.yaml`)](#3-configuration-specification-mllmyaml)
    - [Configuration Schema](#configuration-schema)
@@ -102,7 +104,7 @@ sudo cp target/release/mllm /usr/local/bin/
 ```
 
 ### In-Place Upgrades with `mllm update`
-Starting with **v0.2.0**, Multi-LLM features an autonomous self-updater. It validates release signatures, ensures atomic POSIX file replacement, and runs with zero external runtime dependencies.
+Starting with **v0.2.0**, Multi-LLM features an autonomous self-updater. It enforces fail-closed SHA-256 transport integrity checksums, ensures atomic POSIX file replacement, and runs with zero external runtime dependencies.
 
 ```bash
 # Check if an update is available without modifying files
@@ -111,7 +113,7 @@ mllm update --check
 # Upgrade to the latest published release
 mllm update
 
-# Pin or downgrade to a specific release version
+# Pin or downgrade to a specific release version (intentional rollback)
 mllm update --version v0.1.0
 
 # Simulate the upgrade sequence without altering your system
@@ -132,6 +134,36 @@ mllm update --target ~/.local/bin/mllm
 | `--force` | `-f` | Re-downloads and overwrites the executable even if already up to date. |
 | `--dry-run` | | Resolves architecture, target URLs, and destination paths; prints diagnostics without writing. |
 | `--target <PATH>` | `-t` | Explicit path to replace. Defaults to `std::env::current_exe()`. |
+
+#### Rollback Semantics & Downgrades
+Multi-LLM treats version downgrading as a deliberate, supported resiliency feature:
+- If a target release tag is older than the currently running executable (e.g., executing `mllm update --version v0.1.0` while running v0.2.0), `mllm update` emits an explicit warning notice:
+  ```text
+  Notice: Target version v0.1.0 is older than current version v0.2.0 (downgrade)
+  ```
+- The operation is **unblocked** and completes normally, allowing operators to rollback quickly if an issue arises in a newer release.
+
+### Security, Trust Model & Supply-Chain Attestation
+
+#### Transport Integrity Model
+The `mllm update` command verifies **transport integrity** before decompressing or replacing files:
+- **Corrupted Download Protection**: The SHA-256 hash of the downloaded tarball is verified against the published `.sha256` asset. Missing, empty, or mismatched checksums cause an immediate, fail-closed abort.
+- **Origin & Threat Scope**: Checksums are hosted alongside release archives on GitHub. They guard against network transmission errors, partial downloads, and disk corruption. They do **not** guard against upstream repository or release pipeline compromise, and releases in v0.2.0 and prior do not contain embedded cryptographic release signatures.
+
+#### Out-of-Band Cryptographic SLSA Attestations (Starting v0.2.1)
+Starting with release **v0.2.1**, Multi-LLM adopts cryptographic GitHub Artifact Attestations (`actions/attest-build-provenance`) backed by Sigstore/in-toto SLSA v1.0 specifications.
+
+> [!IMPORTANT]
+> **Non-Retroactivity Boundary**: Cryptographic SLSA attestations apply starting with **v0.2.1**. Release `v0.2.0` and earlier releases rely strictly on published SHA-256 transport checksums.
+
+- **Prerequisites**: GitHub CLI [`gh`](https://cli.github.com/) version `2.43` or higher (`gh --version`).
+- **Verification Workflow**: Verify the cryptographic provenance of release artifacts out-of-band:
+  ```bash
+  gh attestation verify mllm-<target>.tar.gz \
+    --repo yeusin/mllm \
+    --signer-workflow .github/workflows/release.yml
+  ```
+- **Zero-Bloat Architecture Boundary**: To preserve `mllm`'s ultra-lightweight footprint (<17 KB `.text` footprint, <5 MB RSS peak, 0 transitive dependencies, and sub-6-second release build times), cryptographic attestation validation is intentionally delegated out-of-band to `gh attestation verify` rather than embedding heavy cryptographic libraries (e.g. `ring`, `rustls`, `sigstore`) inside the `mllm update` binary.
 
 ### Managing Permissions & Non-Root Upgrades
 - **System Installations (`/usr/local/bin`)**:  
@@ -348,6 +380,7 @@ On Unix platforms, attempting to overwrite a running binary directly triggers `E
 `mllm update` enforces fail-closed SHA-256 verification:
 - Before any archive is decompressed, the SHA-256 checksum is downloaded and compared against the file hash.
 - Archives are extracted with `--no-same-owner --no-same-permissions` inside a private temporary directory (`0700` permissions).
+- **Trust Scope**: Published SHA-256 checksums guard against transport corruption and incomplete network downloads. They do not guard against upstream pipeline compromise. For high-assurance environments requiring cryptographic SLSA build provenance, verify releases out-of-band starting with v0.2.1 using `gh attestation verify` (`gh >= 2.43`).
 - If your enterprise environment blocks external connections or utilizes an SSL inspection proxy, ensure `curl` or `wget` is configured with appropriate certificates in `/etc/ssl/certs`.
 
 ### Shared Log File Recovery & Dead-Letter Log
