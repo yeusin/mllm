@@ -95,23 +95,23 @@ pub fn load_new_messages_from_offset(
     path: &Path,
     last_offset: u64,
 ) -> Result<(Vec<ChatMessage>, u64)> {
-    if !path.exists() {
+    let Ok(meta) = std::fs::metadata(path) else {
         return Ok((Vec::new(), 0));
+    };
+
+    let file_len = meta.len();
+    if file_len == last_offset {
+        return Ok((Vec::new(), last_offset));
     }
 
-    let mut file = File::open(path)
-        .with_context(|| format!("Failed to open chat log: {}", path.display()))?;
-
-    let file_len = file.metadata()?.len();
     if file_len < last_offset {
         // File was truncated or rotated: re-read from beginning
         let (messages, _) = load_messages(path)?;
         return Ok((messages, file_len));
     }
 
-    if file_len == last_offset {
-        return Ok((Vec::new(), last_offset));
-    }
+    let mut file = File::open(path)
+        .with_context(|| format!("Failed to open chat log: {}", path.display()))?;
 
     file.seek(SeekFrom::Start(last_offset))?;
     let mut reader = BufReader::new(file);
