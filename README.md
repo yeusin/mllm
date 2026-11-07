@@ -338,11 +338,35 @@ cargo test
 
 ## 8. Getting Started
 
-### Prerequisites
+### Installation
+
+#### Automated Install (Linux & macOS)
+Install the pre-built `mllm` executable directly using the installation script:
+
+```bash
+# Install latest release into /usr/local/bin or ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/yeusin/mllm/main/install.sh | bash
+```
+
+Or run directly from a cloned repository:
+```bash
+./install.sh
+```
+
+Custom installation directory or specific version:
+```bash
+# Install to custom directory
+curl -fsSL https://raw.githubusercontent.com/yeusin/mllm/main/install.sh | bash -s -- --bin-dir ~/.local/bin
+
+# Install specific release tag
+curl -fsSL https://raw.githubusercontent.com/yeusin/mllm/main/install.sh | bash -s -- --version v0.1.0
+```
+
+### Prerequisites (for building from source)
 - **Rust Toolchain**: 1.85+ (Edition 2024 support)
 - **Agent CLI**: [`agy`](https://github.com/google-deepmind/antigravity) (or any interactive CLI tool like `bash`, `python`, etc.)
 
-### Build & Run
+### Build & Run from Source
 ```bash
 # Clone repository
 git clone git@github.com:yeusin/mllm.git
