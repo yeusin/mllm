@@ -1,6 +1,7 @@
 use crate::chat::{
-    append_message, build_startup_instructions, extract_mentions, extract_role_instruction_target,
-    load_messages, strip_at_mentions, ChatMessage, BOUNDARY_MARKER,
+    append_message, build_startup_instructions_with_vars, extract_mentions,
+    extract_role_instruction_target, load_messages, strip_at_mentions, ChatMessage,
+    BOUNDARY_MARKER,
 };
 use crate::config::{parse_prefix_key, AppConfig, ParsedPrefix};
 use crate::pty::ClientPane;
@@ -83,9 +84,9 @@ impl AppState {
         }
 
         // Load existing chat history
-        let (mut chat_history, initial_message_ids) = load_messages(&chat_file_path)?;
+        let (chat_history, initial_message_ids) = load_messages(&chat_file_path)?;
         let initial_offset = std::fs::metadata(&chat_file_path).map(|m| m.len()).unwrap_or(0);
-        let mut known_message_ids = initial_message_ids.clone();
+        let known_message_ids = initial_message_ids.clone();
 
         // Initialize client panes
         let mut clients = Vec::new();
@@ -108,40 +109,12 @@ impl AppState {
             let _ = client.write_raw(BOUNDARY_MARKER.as_bytes());
         }
 
-        // Unified Single-Prompt Startup & Warm-Start Detection:
-        // On cold start, deliver a single targeted startup instruction per agent merging
-        // general protocol, role assignment, and a silent standby directive.
-        // Writes are staggered by 150ms starting after the 3.0s initial window.
-        // On warm start (chat log exists and contains records), skip replay into the shared
-        // log; agents receive role preambles lazily on their first task prompt.
-        let mut startup_tasks = Vec::new();
-        let mut initialized_clients = HashSet::new();
-        let is_warm_start = !chat_history.is_empty();
-
-        if !is_warm_start {
-            let general = config.general_instructions.trim();
-            for (idx, client_cfg) in config.clients.iter().enumerate() {
-                let inst = client_cfg.instructions.trim();
-                let body = build_startup_instructions(
-                    general,
-                    &client_cfg.name,
-                    &client_cfg.role,
-                    inst,
-                );
-                let content = format!(
-                    "@{} [Startup Instructions: {}]\n{}\n\nStand by silently ready for tasks. Do NOT reply or write an acknowledgment to shared_chat.jsonl until assigned a specific task or question.",
-                    client_cfg.name, client_cfg.role, body
-                );
-                let startup_msg = ChatMessage::new_coordinator(content, None);
-                known_message_ids.insert(startup_msg.id.clone());
-                let _ = append_message(&chat_file_path, &startup_msg);
-                chat_history.push(startup_msg.clone());
-
-                let delay = 3000u64 + (idx as u64 * 150);
-                startup_tasks.push((startup_msg, delay));
-                initialized_clients.insert(idx);
-            }
-        }
+        // Unified Lazy Instruction Injection:
+        // Startup instructions are not delivered via chat file replay or startup broadcasts.
+        // Even when chat_file is empty or not created, all agents receive general protocol
+        // and role-specific instructions lazily prepended to their first task prompt as an
+        // atomic composite prompt.
+        let initialized_clients = HashSet::new();
 
         let mut state = Self {
             config,
@@ -172,12 +145,6 @@ impl AppState {
             active_tasks: HashMap::new(),
         };
         state.reset_composer_with_default();
-
-        // Route startup instructions from Coordinator
-        for (msg, delay) in startup_tasks {
-            state.route_message_with_delay(&msg, delay);
-        }
-        state.active_chain_depth = 0; // Reset depth so initial instructions don't consume user quota
 
         Ok(state)
     }
@@ -1198,11 +1165,13 @@ impl AppState {
                         self.initialized_clients.insert(idx);
                         if let Some(client_cfg) = self.config.clients.get(idx) {
                             let inst = client_cfg.instructions.trim();
-                            let startup_instructions = build_startup_instructions(
+                            let vars = self.config.instruction_vars_for(client_cfg);
+                            let startup_instructions = build_startup_instructions_with_vars(
                                 &self.config.general_instructions,
                                 &client_cfg.name,
                                 &client_cfg.role,
                                 inst,
+                                &vars,
                             );
                             format!("{}\n\n{}", startup_instructions, task_prompt)
                         } else {

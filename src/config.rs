@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -51,6 +51,26 @@ impl Default for AppConfig {
             general_instructions: String::new(),
             clients: Vec::new(),
         }
+    }
+}
+
+impl AppConfig {
+    /// Builds the standard variable interpolation map for client instruction templates.
+    pub fn instruction_vars_for(&self, client: &ClientConfig) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+        vars.insert("chat_file".to_string(), self.chat_file.clone());
+        vars.insert("chatfile".to_string(), self.chat_file.clone());
+        vars.insert("prefix_key".to_string(), self.prefix_key.clone());
+        vars.insert("prefixkey".to_string(), self.prefix_key.clone());
+        vars.insert("name".to_string(), client.name.clone());
+        vars.insert("client_name".to_string(), client.name.clone());
+        vars.insert("role".to_string(), client.role.clone());
+        vars.insert("client_role".to_string(), client.role.clone());
+        vars.insert("command".to_string(), client.command.clone());
+        vars.insert("client_command".to_string(), client.command.clone());
+        vars.insert("number".to_string(), client.number.to_string());
+        vars.insert("client_number".to_string(), client.number.to_string());
+        vars
     }
 }
 
@@ -148,7 +168,7 @@ pub fn default_init_config() -> AppConfig {
         chat_file: default_chat_file(),
         prefix_key: default_prefix(),
         general_instructions: r#"Shared Log Coordination & Output Protocol:
-1. Shared Log File: All clients coordinate and store outputs by appending to shared_chat.jsonl.
+1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
 2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
    {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
 3. Unique UUID & Question Linking: Generate a unique UUID for "id" and reference the question's UUID with "reply_to".
@@ -161,6 +181,7 @@ pub fn default_init_config() -> AppConfig {
    - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
 6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
 7. Communication Standards: Be concise, clear, and actionable.
+8. Mandatory Result Output: Always output results and answers by appending to {chat_file}. If an agent does not write its output to {chat_file}, the coordinator keeps showing the agent as in-progress.
 "#.to_string(),
         clients: vec![
             ClientConfig {

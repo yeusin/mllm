@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 #[cfg(unix)]
@@ -269,15 +269,53 @@ pub fn strip_at_mentions(text: &str) -> String {
 pub const BOUNDARY_MARKER: &str =
     "=== [Active Session: Only reacting to new chat entered after this mark] ===\r\n";
 
+/// Replaces variable placeholders formatted as `{variable}` or `{ variable }` with corresponding values from `vars`.
+/// Unmatched curly braces (such as JSON syntax like `{"id": ...}`) are safely preserved.
+pub fn replace_instruction_placeholders(
+    template: &str,
+    vars: &HashMap<String, String>,
+) -> String {
+    let mut result = template.to_string();
+    for (k, v) in vars {
+        result = result.replace(&format!("{{{}}}", k), v);
+        result = result.replace(&format!("{{ {} }}", k), v);
+    }
+    result
+}
+
 pub fn build_startup_instructions(
     general_instructions: &str,
     client_name: &str,
     client_role: &str,
     client_instructions: &str,
 ) -> String {
-    let mut sections = Vec::new();
+    let vars = HashMap::new();
+    build_startup_instructions_with_vars(
+        general_instructions,
+        client_name,
+        client_role,
+        client_instructions,
+        &vars,
+    )
+}
 
-    let general_trimmed = general_instructions.trim();
+pub fn build_startup_instructions_with_vars(
+    general_instructions: &str,
+    client_name: &str,
+    client_role: &str,
+    client_instructions: &str,
+    custom_vars: &HashMap<String, String>,
+) -> String {
+    let mut vars = custom_vars.clone();
+    vars.entry("name".to_string()).or_insert_with(|| client_name.to_string());
+    vars.entry("client_name".to_string()).or_insert_with(|| client_name.to_string());
+    vars.entry("role".to_string()).or_insert_with(|| client_role.to_string());
+    vars.entry("client_role".to_string()).or_insert_with(|| client_role.to_string());
+
+    let general_trimmed = replace_instruction_placeholders(general_instructions.trim(), &vars);
+    let inst = replace_instruction_placeholders(client_instructions.trim(), &vars);
+
+    let mut sections = Vec::new();
     if !general_trimmed.is_empty() {
         sections.push(format!("[General Instructions & Protocol]\n{}", general_trimmed));
     }
@@ -286,7 +324,6 @@ pub fn build_startup_instructions(
         "[Role Instructions]\nName: {}\nRole: {}",
         client_name, client_role
     );
-    let inst = client_instructions.trim();
     if !inst.is_empty() {
         role_section.push_str(&format!("\n{}", inst));
     }
@@ -444,6 +481,39 @@ mod tests {
         assert!(startup.contains("Name: Architect"));
         assert!(startup.contains("Role: Lead Architect"));
         assert!(startup.contains("Lead the design."));
+    }
+
+    #[test]
+    fn test_instruction_placeholders_replacement() {
+        let mut vars = HashMap::new();
+        vars.insert("chat_file".to_string(), "custom_chat.jsonl".to_string());
+        vars.insert("prefix_key".to_string(), "ctrl+a".to_string());
+        vars.insert("name".to_string(), "Reviewer".to_string());
+        vars.insert("role".to_string(), "Auditor".to_string());
+
+        let template = "Log to {chat_file} (or { chat_file }) using {prefix_key}. Example JSON: {\"id\": \"<uuid>\"}. Client {name} as {role}.";
+        let result = replace_instruction_placeholders(template, &vars);
+
+        assert_eq!(
+            result,
+            "Log to custom_chat.jsonl (or custom_chat.jsonl) using ctrl+a. Example JSON: {\"id\": \"<uuid>\"}. Client Reviewer as Auditor."
+        );
+    }
+
+    #[test]
+    fn test_build_startup_instructions_with_vars() {
+        let general = "Shared Log: Append to {chat_file}. Schema: {\"id\": \"<uuid>\"}.";
+        let name = "Researcher";
+        let role = "Investigator";
+        let instructions = "You are {name}, tasked with {role}. Report to {chat_file}.";
+
+        let mut vars = HashMap::new();
+        vars.insert("chat_file".to_string(), "team_log.jsonl".to_string());
+
+        let startup = build_startup_instructions_with_vars(general, name, role, instructions, &vars);
+        assert!(startup.contains("Shared Log: Append to team_log.jsonl."));
+        assert!(startup.contains("Schema: {\"id\": \"<uuid>\"}."));
+        assert!(startup.contains("You are Researcher, tasked with Investigator. Report to team_log.jsonl."));
     }
 
     #[test]

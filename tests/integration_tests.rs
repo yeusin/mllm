@@ -131,36 +131,37 @@ async fn test_startup_instructions_playback_on_app_init() {
     // Give asynchronous typing playback task time to complete
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-    // Check that chat file is created on first run and contains instructions
-    let chat_file = tmp_dir.join("test_chat.jsonl");
-    assert!(chat_file.exists());
+    // Under lazy instruction injection, no startup messages are pre-broadcast to shared_chat.
+    // Client starts uninitialized until the first task prompt is routed.
+    assert_eq!(app.chat_history.len(), 0);
+    assert_eq!(app.initialized_clients.len(), 0);
 
-    // Check that coordinator chat history originated the unified instructions
-    assert_eq!(app.chat_history.len(), 1);
-    assert_eq!(app.chat_history[0].sender, "Coordinator");
-    assert!(app.chat_history[0].message.contains("@Architect"));
-    assert!(app.chat_history[0].message.contains("Universal output protocol."));
-    assert!(app.chat_history[0].message.contains("Design architecture."));
-    assert!(app.chat_history[0].message.contains("Stand by silently ready for tasks"));
+    // Route first task prompt to Architect
+    let user_msg = ChatMessage::new_user("@Architect Review initial architecture".to_string());
+    app.route_message(&user_msg);
+    assert!(app.initialized_clients.contains(&0));
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    {
+        let parser = app.clients[0].vt_parser.lock().unwrap();
+        let contents = parser.screen().contents();
+        assert!(contents.contains("Universal output protocol."));
+        assert!(contents.contains("Design architecture."));
+    }
 
     // Check that client pane received simulated typing
     assert_eq!(app.clients.len(), 1);
     app.shutdown();
 
-    // Restart app in the same directory where chat log already exists (warm start).
-    // Pre-existing instructions should not re-play into shared_chat to prevent log bloat and delay.
+    // Restart app in the same directory (warm start).
+    // Client starts uninitialized, and first task prompt lazily injects instructions.
     let (tx2, _rx2) = mpsc::unbounded_channel();
     let mut app2 = AppState::new(config, &tmp_dir, tx2).expect("Failed to restart AppState");
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Chat history should still contain only the original message (no replayed duplicates)
-    assert_eq!(app2.chat_history.len(), 1);
-
-    // Verify lazy role injection: on warm start, initialized_clients is empty,
-    // and the first task prompt to Architect lazily marks Architect as initialized.
     assert_eq!(app2.initialized_clients.len(), 0);
-    let user_msg = ChatMessage::new_user("@Architect Please design the subsystem".to_string());
-    app2.route_message(&user_msg);
+    let user_msg2 = ChatMessage::new_user("@Architect Please design the subsystem".to_string());
+    app2.route_message(&user_msg2);
     assert!(app2.initialized_clients.contains(&0));
 
     app2.shutdown();
@@ -1213,3 +1214,64 @@ fn test_init_command_interactive_role_assignment() {
 
     let _ = fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_update_workflow_dry_run_and_check() {
+    use mllm::update::{run_update, UpdateOptions};
+
+    let tmp_bin = std::env::temp_dir().join(format!("mock_mllm_{}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp_bin, b"#!/bin/sh\necho mllm 0.1.0\n").unwrap();
+
+    // 1. Dry run
+    let mut out_dry = Vec::new();
+    let opts_dry = UpdateOptions {
+        dry_run: true,
+        version: "v1.0.0".to_string(),
+        target_path: Some(tmp_bin.clone()),
+        ..Default::default()
+    };
+    let res = run_update(&opts_dry, &mut out_dry);
+    assert!(res.is_ok(), "Dry-run update should succeed");
+    let dry_str = String::from_utf8(out_dry).unwrap();
+    assert!(dry_str.contains("[Dry Run] Planned actions:"));
+    assert!(dry_str.contains("mllm-"));
+    assert!(dry_str.contains(".tar.gz"));
+
+    // 2. Check mode
+    let mut out_check = Vec::new();
+    let opts_check = UpdateOptions {
+        check_only: true,
+        version: format!("v{}", env!("CARGO_PKG_VERSION")),
+        target_path: Some(tmp_bin.clone()),
+        ..Default::default()
+    };
+    let res = run_update(&opts_check, &mut out_check);
+    assert!(res.is_ok(), "Check-only update should succeed");
+    let check_str = String::from_utf8(out_check).unwrap();
+    assert!(check_str.contains("Current mllm version:"));
+
+    let _ = std::fs::remove_file(&tmp_bin);
+}
+
+#[test]
+fn test_update_atomic_replacement_integrity() {
+    use mllm::update::atomic_replace;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_atomic_integ_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let target = tmp_dir.join("mllm_live");
+    let source = tmp_dir.join("mllm_staged");
+
+    std::fs::write(&target, b"old-version-binary-data").unwrap();
+    std::fs::write(&source, b"new-version-binary-data").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old-version-binary-data");
+
+    atomic_replace(&source, &target).expect("atomic_replace must succeed in writable directory");
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new-version-binary-data");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+

@@ -5,7 +5,7 @@ prefix_key: "ctrl+b"
 # General instructions shared across all LLM clients
 general_instructions: |
   Shared Log Coordination & Output Protocol:
-  1. Shared Log File: All clients coordinate and store outputs by appending to shared_chat.jsonl.
+  1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
   2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
      {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
   3. Unique UUID & Question Linking: Generate a unique UUID for "id" and reference the question's UUID with "reply_to".
@@ -18,6 +18,7 @@ general_instructions: |
      - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
   6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
   7. Communication Standards: Be concise, clear, and actionable.
+  8. Mandatory Result Output: Always output results and answers by appending to {chat_file}. If an agent does not write its output to {chat_file}, the coordinator keeps showing the agent as in-progress.
 
 clients:
   - number: 1
@@ -34,7 +35,7 @@ clients:
   - number: 2
     name: Reviewer
     role: Reviewer & Auditor
-    command: opencode
+    command: opencode --auto
     instructions: |
       Review architecture, code quality, edge cases, vulnerability vectors, and concurrency safety.
       Audit reliability, error handling, memory safety, and maintenance overhead.

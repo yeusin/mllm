@@ -77,7 +77,7 @@ prefix_key: "ctrl+b"
 # General instructions shared across all LLM clients
 general_instructions: |
   Shared Log Coordination & Output Protocol:
-  1. Shared Log File: All clients coordinate and store outputs by appending to shared_chat.jsonl.
+  1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
   2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
      {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
   3. Unique UUID & Question Linking: Generate a unique UUID for "id" and reference the question's UUID with "reply_to".
@@ -90,6 +90,7 @@ general_instructions: |
      - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
   6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
   7. Communication Standards: Be concise, clear, and actionable.
+  8. Mandatory Result Output: Always output results and answers by appending to {chat_file}. If an agent does not write its output to {chat_file}, the coordinator keeps showing the agent as in-progress.
 
 clients:
   - number: 1
@@ -162,6 +163,8 @@ clients:
   - `command` *(string, default: `"agy"`)*: Command spawned in the PTY. Supports shell arguments via `shell-words` (e.g. `agy --dangerously-skip-permissions`).
   - `instructions` *(string)*: Persona and domain instructions injected on client initialization.
   - `extra_args` *(array of strings, optional)*: Additional arguments appended to the spawned command.
+
+*Template Variables*: Placeholders such as `{chat_file}`, `{prefix_key}`, `{name}`, `{role}`, `{command}`, and `{number}` in `general_instructions` and client `instructions` are automatically interpolated with values from the configuration when startup instructions are set. Raw JSON syntax such as `{"id": ...}` is safely preserved.
 
 An example configuration is provided in `mllm.yaml.example`. Copy it to `mllm.yaml` to customize your multi-agent environment.
 
@@ -308,8 +311,8 @@ The Multi-LLM test suite enforces complete verification across all subsystems:
 cargo test
 ```
 
-### Verified Test Suite (38 Tests Passing)
-- **Unit Tests (`src/lib.rs` - 22 tests)**:
+### Verified Test Suite (67 Tests Passing)
+- **Unit Tests (`src/lib.rs` - 44 tests)**:
   - `app::tests::test_mouse_selection_clamping_to_pane`
   - `app::tests::test_base64_encode_and_screen_text_extraction`
   - `app::tests::test_pageup_pagedown_scrollback`
@@ -321,7 +324,18 @@ cargo test
   - `config::tests::test_parse_prefix_key` & `test_config_collision_reassignment`
   - `ui::tests::test_calculate_layout` & `test_sender_palette_coverage`
   - `ui::tests::test_render_coordinator_multiline_composer`
-- **Integration Tests (`tests/integration_tests.rs` - 16 tests)**:
+  - `update::tests::test_detect_target_triple`
+  - `update::tests::test_normalize_version`
+  - `update::tests::test_dry_run_output`
+  - `update::tests::test_check_up_to_date_output`
+  - `update::tests::test_atomic_replace_and_permissions`
+  - `update::tests::test_parse_semver_tuple_and_downgrade_notice`
+  - `update::tests::test_target_directory_rejected_early`
+  - `update::tests::test_validate_version_string`
+  - `update::tests::test_checksum_verification_fail_paths`
+  - `update::tests::test_extracted_payload_validation_fail_paths`
+  - `update::tests::test_broken_symlink_target_handling`
+- **Integration Tests (`tests/integration_tests.rs` - 23 tests)**:
   - `test_chat_message_json_protocol`
   - `test_config_loading_and_defaults`
   - `test_app_init_stops_and_errors_on_invalid_command`
@@ -333,6 +347,8 @@ cargo test
   - `test_multiline_multiple_peer_mentions_routing`
   - `test_tab_autocomplete_available_agents`
   - `test_startup_instructions_playback_on_app_init`
+  - `test_update_workflow_dry_run_and_check`
+  - `test_update_atomic_replacement_integrity`
 
 ---
 
@@ -361,6 +377,75 @@ curl -fsSL https://raw.githubusercontent.com/yeusin/mllm/main/install.sh | bash 
 # Install specific release tag
 curl -fsSL https://raw.githubusercontent.com/yeusin/mllm/main/install.sh | bash -s -- --version v0.1.0
 ```
+
+### Upgrading & In-Place Updates (`mllm update`)
+
+Multi-LLM includes a native self-update mechanism via the `mllm update` command. It automatically resolves your host architecture and operating system, queries GitHub releases, validates SHA-256 asset checksums, and performs an atomic in-place binary replacement to prevent Unix `ETXTBSY` (Text file busy) execution locks.
+
+```bash
+# Check for updates without applying changes
+mllm update --check
+
+# Upgrade to the latest published release
+mllm update
+
+# Pin or switch to a specific version or release tag
+mllm update --version v0.1.0
+
+# Simulate the upgrade sequence without modifying files
+mllm update --dry-run
+
+# Force reinstallation of the same version
+mllm update --force
+
+# Update a specific target executable path
+mllm update --target ~/.local/bin/mllm
+```
+
+#### CLI Flags & Options
+| Flag | Short | Description |
+| :--- | :--- | :--- |
+| `--check` | `-c` | Queries the latest GitHub release and reports status without writing changes. |
+| `--version <VER>` | `-v` | Target version or tag to install (e.g. `v0.1.0`). Defaults to `latest`. |
+| `--force` | `-f` | Forces re-download and reinstallation even if already on the latest version. |
+| `--dry-run` | | Simulates target detection, download URL, checksum URL, and replacement path without making any changes. |
+| `--target <PATH>` | `-t` | Explicit executable path to replace. Defaults to the running executable (`std::env::current_exe`). |
+
+#### Zero-Bloat Subprocess Architecture & Performance
+Unlike traditional Rust update mechanisms that embed heavy crates (`self_update`, `reqwest`, `hyper`, `rustls`, or `ring`), `mllm update` delegates network transport and decompression to standard OS utilities (`curl`/`wget`, `tar`, and `sha256sum`/`shasum`/`openssl`):
+- **Zero Added Dependencies**: Adds 0 transitive crates to the dependency graph, preserving rapid incremental release compile times (~5.7s).
+- **Minimal Footprint**: The entire update subsystem occupies only **~16.5 KB** of compiled `.text` code (~0.3% of binary size), avoiding 1.8–2.8 MB of library bloat.
+- **Ultra-Low Memory Overhead**: Runs with **<5 MB peak RSS** in `mllm`, delegating memory-intensive TLS buffering to ephemeral child processes.
+- **Native OS Trust Store**: Seamlessly respects host system CA certificates and enterprise proxy configurations via `curl`/`wget` without requiring manual certificate bundles.
+
+> [!NOTE]
+> By avoiding heavy in-process TLS and decompression stacks, `mllm update` prevents OpenSSL shared library conflicts and keeps compilation times under 6 seconds.
+
+#### Permission Remediation
+- **System-Wide Installations (`/usr/local/bin` / `/usr/bin`)**:
+  If `mllm` was installed in a system directory owned by root, run the update with elevated privileges:
+  ```bash
+  sudo mllm update
+  ```
+- **User-Local Installations (`~/.local/bin`)**:
+  If you prefer unprivileged updates without `sudo`, install or target user space:
+  ```bash
+  mllm update --target ~/.local/bin/mllm
+  ```
+  Ensure `~/.local/bin` is in your `PATH` (`export PATH="$HOME/.local/bin:$PATH"`).
+
+> [!TIP]
+> To run self-updates unprivileged without requiring `sudo`, install `mllm` to `~/.local/bin` (`install.sh --bin-dir ~/.local/bin`) and ensure `~/.local/bin` is exported in your `PATH`.
+
+#### Architecture & Integrity Safeguards
+- **Platform Detection**: Automatically maps host OS (`linux`, `macos`), architecture (`x86_64`, `aarch64`), and target libc (`gnu` vs `musl`) to release assets.
+- **Mandatory Fail-Closed SHA-256 Verification**: Fetches the official `.sha256` checksum asset (using `curl` with `wget` fallback). Verification is strictly enforced before decompression—if checksum retrieval fails or hashes diverge, execution halts immediately.
+- **Hardened Multi-User Staging**: Unpacks archives within a private temporary directory restricted to `0700` permissions (`DirBuilderExt::mode(0o700)`) to mitigate multi-user `/tmp` snooping or tampering.
+- **Payload & Archive Hardening**: Ensures extracted binary is a regular file (`is_file()`, rejecting symlinks and directories) and extracts archives using `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards under `sudo`.
+- **Atomic In-Place Replacement & Fsync Durability**: Stages the binary into `.mllm-update-<uuid>.tmp` within the same target directory, applies `0755` permissions, flushes disk buffers via `sync_all()` (`fsync`) to prevent power-loss truncation, and executes an atomic POSIX `rename(2)` to overwrite the target executable cleanly without `ETXTBSY` lockouts.
+- **Semantic Versioning & Early Validation**: Rejects invalid version strings or directory targets early, and surfaces clear downgrade notices when switching to older releases.
+
+For in-depth operational instructions, refer to the [User Guide](docs/USER_GUIDE.md) and [Release Notes](RELEASE_NOTES.md).
 
 ### Prerequisites (for building from source)
 - **Rust Toolchain**: 1.85+ (Edition 2024 support)

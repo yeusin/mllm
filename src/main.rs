@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(
     name = "mllm",
-    version = "0.1.0",
+    version,
     about = "Tmux-Style Multi-LLM Client Coordination Tool"
 )]
 struct Cli {
@@ -41,6 +41,28 @@ enum Commands {
         /// Overwrite configuration file if it already exists
         #[arg(short, long)]
         force: bool,
+    },
+    /// Update existing mllm executable to the latest version
+    Update {
+        /// Check for available updates without applying them
+        #[arg(short, long)]
+        check: bool,
+
+        /// Specific version or tag to install (e.g. 'v0.1.0') [default: latest]
+        #[arg(short, long, default_value = "latest")]
+        version: String,
+
+        /// Force update even if already on the latest version
+        #[arg(short, long)]
+        force: bool,
+
+        /// Simulate update steps without writing changes
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Target executable path to update [default: current executable]
+        #[arg(short, long)]
+        target: Option<PathBuf>,
     },
 }
 
@@ -68,6 +90,25 @@ async fn main() -> Result<()> {
         let stdin = io::stdin();
         let mut stdout = io::stdout();
         return run_init(&mut stdin.lock(), &mut stdout, &output, force);
+    }
+
+    if let Some(Commands::Update {
+        check,
+        version,
+        force,
+        dry_run,
+        target,
+    }) = cli.command
+    {
+        let opts = mllm::update::UpdateOptions {
+            check_only: check,
+            version,
+            force,
+            dry_run,
+            target_path: target,
+        };
+        let mut stdout = io::stdout();
+        return mllm::update::run_update(&opts, &mut stdout);
     }
 
     // Determine config path and its parent directory
