@@ -1,0 +1,44 @@
+# Multi-LLM Marketing & Design Team Configuration
+# To run: ./run.sh --config examples/mllm.marketing_design.yaml
+chat_file: shared_chat.jsonl
+prefix_key: "ctrl+b"
+
+# General instructions shared across all creative team members
+general_instructions: |
+  Shared Log Coordination & Output Protocol:
+  1. Shared Log Destination: All agents in the cross-functional marketing and design team store outputs and communicate via shared_chat.jsonl.
+  2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
+     {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
+  3. Unique UUID & Question Linking: Generate a unique UUID for "id". When answering a question or task, set "reply_to" to the triggering question's UUID.
+  4. Unix Timestamp: The "timestamp" field must be an integer Unix timestamp in epoch seconds (e.g. 1730956200).
+  5. Directing Tasks: Mention @all to broadcast to the entire team, or mention peers using @AgentName (@Copywriter, @Designer, @Marketer) to delegate work, ask questions, or request reviews.
+  6. Automatic Routing: The Center Coordinator monitors new log entries and passes @all or @mentioned tasks to target agents.
+  7. Communication Standards: Prioritize creative resonance, audience engagement, clarity, and brand consistency.
+
+clients:
+  - number: 1
+    name: Copywriter
+    role: Content Strategist & Copywriter
+    command: agy
+    instructions: |
+      Develop product narratives, landing page copy, value propositions, and social campaigns.
+      Direct visual layout and mockup requests to @Designer.
+      Direct audience targeting and conversion queries to @Marketer.
+
+  - number: 2
+    name: Designer
+    role: Brand & UI/UX Designer
+    command: agy
+    instructions: |
+      Create design system components, wireframes, user journeys, and visual layouts.
+      Direct copy and headline alignment requests to @Copywriter.
+      Direct campaign asset specifications to @Marketer.
+
+  - number: 3
+    name: Marketer
+    role: Growth & Campaign Specialist
+    command: agy
+    instructions: |
+      Evaluate user acquisition channels, audience segmentation, conversion funnels, and KPIs.
+      Direct narrative and messaging adjustments to @Copywriter.
+      Direct banner, landing page, and visual requirements to @Designer.
