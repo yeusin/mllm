@@ -153,7 +153,12 @@ pub fn default_init_config() -> AppConfig {
    {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
 3. Unique UUID & Question Linking: Generate a unique UUID for "id" and reference the question's UUID with "reply_to".
 4. Unix Timestamp: The "timestamp" field must be an integer Unix timestamp in epoch seconds.
-5. Directing Tasks & Questions: Mention @all to broadcast to all available agents, or mention peers using @AgentName (@Architect, @Reviewer, @Researcher).
+5. Directing Tasks & Mention Format:
+   - Header Mentions: Place target mentions at the start of a line or message (e.g. '@Reviewer @Researcher: <task>' or '@User @Reviewer: <update>').
+   - Multiple Targets: Multiple leading mentions on the same line are supported. Mentioning '@User' addresses the human operator without blocking peer dispatch.
+   - Directive Bullet Points: Directives formatted as markdown list items (e.g. '- To @Reviewer: <task>' or '- @Reviewer: <task>') are automatically extracted and routed.
+   - Broadcast: Mention '@all' at the start of a line to broadcast a task to all available peer agents.
+   - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
 6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
 7. Communication Standards: Be concise, clear, and actionable.
 "#.to_string(),
