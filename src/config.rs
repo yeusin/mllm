@@ -167,17 +167,11 @@ clients:
 
     #[test]
     fn test_load_example_configs() {
-        let eng = Path::new("examples/mllm.engineering.yaml");
-        if eng.exists() {
-            let cfg = load_config(eng).unwrap();
-            assert_eq!(cfg.clients.len(), 3);
+        let example = Path::new("mllm.yaml.example");
+        if example.exists() {
+            let cfg = load_config(example).unwrap();
+            assert!(!cfg.clients.is_empty());
             assert_eq!(cfg.clients[0].name, "Architect");
-        }
-
-        let mkt = Path::new("examples/mllm.marketing_design.yaml");
-        if mkt.exists() {
-            let cfg = load_config(mkt).unwrap();
-            assert_eq!(cfg.clients.len(), 3);
         }
     }
 }

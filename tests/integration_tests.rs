@@ -15,7 +15,12 @@ fn test_message_local_timestamp_formatting() {
 
 #[test]
 fn test_config_loading_and_defaults() {
-    let cfg = load_config(Path::new("mllm.yaml")).expect("Failed to load mllm.yaml");
+    let config_path = if Path::new("mllm.yaml").exists() {
+        Path::new("mllm.yaml")
+    } else {
+        Path::new("mllm.yaml.example")
+    };
+    let cfg = load_config(config_path).expect("Failed to load mllm.yaml or mllm.yaml.example");
     assert_eq!(cfg.chat_file, "shared_chat.jsonl");
     assert_eq!(cfg.prefix_key, "ctrl+b");
     assert!(!cfg.clients.is_empty());

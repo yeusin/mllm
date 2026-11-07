@@ -151,7 +151,7 @@ clients:
   - `instructions` *(string)*: Persona and domain instructions injected on client initialization.
   - `extra_args` *(array of strings, optional)*: Additional arguments appended to the spawned command.
 
-Preset configurations for specialized teams are available in [`examples/`](file:///home/ykim/Projects/mllm/examples) (e.g. `mllm.engineering.yaml`, `mllm.marketing_design.yaml`).
+An example configuration is provided in `mllm.yaml.example`. Copy it to `mllm.yaml` to customize your multi-agent environment.
 
 ---
 
@@ -333,17 +333,17 @@ cargo test
 ### Build & Run
 ```bash
 # Clone repository
-git clone https://github.com/google-deepmind/mllm.git
+git clone git@github.com:yeusin/mllm.git
 cd mllm
+
+# Copy example configuration
+cp mllm.yaml.example mllm.yaml
 
 # Build optimized binary
 cargo build --release
 
 # Run with default configuration (mllm.yaml)
 ./target/release/mllm
-
-# Or specify a custom configuration
-./target/release/mllm --config examples/mllm.engineering.yaml
 ```
 
 ---
