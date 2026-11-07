@@ -19,7 +19,7 @@ Multi-LLM now provides a built-in, unassisted upgrade mechanism that automatical
 
 - **Zero-Bloat Subprocess Architecture**: Avoids adding heavy runtime networking or cryptographic dependencies (`reqwest`, `hyper`, `rustls`, `ring`, or `self_update`). Subprocess orchestration via native OS utilities (`curl`/`wget`, `tar`, `sha256sum`/`shasum`/`openssl`) preserves lightweight binary footprint (~16.5 KB compiled text footprint, ~0.3% of total binary size) and maintains sub-6-second release compile times.
 - **Atomic In-Place Replacement**: Eliminates Unix `ETXTBSY` (Text file busy) execution lockups by staging the downloaded executable into `.mllm-update-<uuid>.tmp` within the same target directory, applying `0755` executable permissions, executing `sync_all()` (`fsync`) for disk durability, and performing an atomic POSIX `rename(2)` over the target path.
-- **Fail-Closed SHA-256 Checksum Verification**: Mandates transport checksum verification before extracting any archive. Automatically checks primary and fallback checksum URL naming conventions (`mllm-<target>.sha256` and `mllm-<target>.tar.gz.sha256`). Mismatched or unretrievable checksums halt immediately before altering files.
+- **Fail-Closed SHA-256 Checksum Verification**: Mandates transport checksum verification before extracting any archive. Validates against the official `mllm-<target>.sha256` release asset (with `install.sh` also verifying `.tar.gz.sha256` naming fallbacks). Mismatched or unretrievable checksums halt immediately before altering files.
 - **Hardened Multi-User Staging**: Extracts archives into a private temporary directory restricted to `0700` (`DirBuilderExt::mode(0o700)`) and invokes `tar` with `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards during `sudo` upgrades. Extracted payloads are validated as non-symlink regular files.
 - **Flexible CLI Controls**:
   - `mllm update --check` (`-c`): Inspect available updates against the local version without downloading or writing files.
@@ -143,7 +143,7 @@ The upcoming **v0.2.1** release introduces cryptographic supply-chain attestatio
      ```bash
      gh attestation verify mllm-<target>.tar.gz \
        --repo yeusin/mllm \
-       --signer-workflow .github/workflows/release.yml
+       --signer-workflow yeusin/mllm/.github/workflows/release.yml
      ```
    - **Zero Added Footprint**: Attestation verification runs out-of-band via GitHub CLI, keeping `mllm` at 0 added dependencies and ~16.5 KB `.text` footprint.
 2. **File Staging Hardening**:

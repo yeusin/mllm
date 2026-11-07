@@ -486,7 +486,7 @@ Unlike traditional Rust update mechanisms that embed heavy crates (`self_update`
     ```bash
     gh attestation verify mllm-<target>.tar.gz \
       --repo yeusin/mllm \
-      --signer-workflow .github/workflows/release.yml
+      --signer-workflow yeusin/mllm/.github/workflows/release.yml
     ```
   - **Zero-Bloat Footprint Boundary**: Delegating attestation verification out-of-band to `gh` preserves `mllm`'s 0-dependency runtime footprint (<17 KB `.text`, <5 MB RSS) without embedding heavy Sigstore or OpenSSL dependencies.
 

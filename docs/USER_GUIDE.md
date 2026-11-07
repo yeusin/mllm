@@ -30,7 +30,7 @@ Welcome to the comprehensive user guide for **Multi-LLM (`mllm`)**, a high-perfo
    - [Prefix Key Navigation](#prefix-key-navigation)
    - [Keybinding Reference Table](#keybinding-reference-table)
    - [Mouse Controls, Selection & Dual-Tier Clipboard](#mouse-controls-selection--dual-tier-clipboard)
-   - [Process Supervision & Pane Respawns](#process-supervision--pane-respawns)
+   - [Process Supervision & Crash Detection](#process-supervision--crash-detection)
 6. [Operational Best Practices & Troubleshooting](#6-operational-best-practices--troubleshooting)
    - [Resolving `ETXTBSY` Execution Locks](#resolving-etxtbsy-execution-locks)
    - [Checksum Verification & Security Auditing](#checksum-verification--security-auditing)
@@ -161,7 +161,7 @@ Starting with release **v0.2.1**, Multi-LLM adopts cryptographic GitHub Artifact
   ```bash
   gh attestation verify mllm-<target>.tar.gz \
     --repo yeusin/mllm \
-    --signer-workflow .github/workflows/release.yml
+    --signer-workflow yeusin/mllm/.github/workflows/release.yml
   ```
 - **Zero-Bloat Architecture Boundary**: To preserve `mllm`'s ultra-lightweight footprint (<17 KB `.text` footprint, <5 MB RSS peak, 0 transitive dependencies, and sub-6-second release build times), cryptographic attestation validation is intentionally delegated out-of-band to `gh attestation verify` rather than embedding heavy cryptographic libraries (e.g. `ring`, `rustls`, `sigstore`) inside the `mllm update` binary.
 
@@ -339,31 +339,39 @@ When the prefix key is armed, the status bar displays an illuminated `[PREFIX]` 
 
 ### Keybinding Reference Table
 
-| Keybinding | Action | Description |
-| :--- | :--- | :--- |
-| `Ctrl+b` then `0` | Select Coordinator | Switch focus to the central Coordinator chat pane. |
-| `Ctrl+b` then `1`–`9` | Select Client Pane | Switch focus directly to Client Pane 1 through 9. |
-| `Ctrl+b` then `o` | Cycle Next Pane | Focus the next pane in sequence. |
-| `Ctrl+b` then `O` | Cycle Prev Pane | Focus the previous pane in sequence. |
-| `Ctrl+b` then `z` | Zoom Pane | Toggle full-screen zoom for the currently focused pane. |
-| `Ctrl+b` then `[` | Scrollback Mode | Enter pane scrollback navigation. |
-| `Ctrl+b` then `k` | Kill Process | Terminate the process running in the current pane. |
-| `Ctrl+b` then `r` | Respawn Process | Restart the client process in the current pane. |
-| `Ctrl+b` then `d` | Detach / Quit | Cleanly shut down Multi-LLM and restore terminal mode. |
-| `PageUp` / `PageDown` | Scroll History | Page up or down in the focused pane's scrollback buffer. |
+| Shortcut | Scope | Action | Description |
+| :--- | :--- | :--- | :--- |
+| `<prefix>` (default `Ctrl+b`) | Global | **Arm Prefix** | Arms prefix mode; status bar highlights `[PREFIX]`. |
+| `<prefix>` then `0` | Global | **Focus Coordinator** | Focuses Center Coordinator chat and composer input. |
+| `<prefix>` then `1`–`9` | Global | **Focus Client Pane** | Switches focus directly to Client Pane 1 through 9. |
+| `<prefix>` then `o` / `n` | Global | **Next Pane** | Cycles focus to next pane numerically. |
+| `<prefix>` then `p` | Global | **Previous Pane** | Cycles focus to previous pane numerically. |
+| `<prefix>` then `y` | Global | **Copy Selection** | Copies active text selection to system clipboard. |
+| `<prefix>` then `Escape` | Global | **Cancel Prefix** | Disarms prefix mode. |
+| `Alt+0`–`Alt+9` | Global | **Instant Jump** | Switches instantly to Pane 0–9 from anywhere (even while typing). |
+| `Tab` | Composer | **Cycle Responder** | Cycles leading mention responder (`@Architect` $\rightarrow$ `@Reviewer` $\rightarrow$ `@Researcher` $\rightarrow$ `@all`). |
+| `Shift+Tab` | Composer | **Reverse Responder** | Cycles leading mention responder in reverse order. |
+| `Tab` / `Shift+Tab` | Navigation | **Cycle Panes** | Cycles focus forward / backward across active panes when composer is unfocused. |
+| `PageUp` | Coordinator | **Scroll Chat Up** | Scrolls Center Coordinator message history up by 10 lines. |
+| `PageDown` | Coordinator | **Scroll Chat Down** | Scrolls Center Coordinator message history down by 10 lines. |
+| `PageUp` / `PageDown` | Client Pane | **Scroll PTY Buffer** | Scrolls focused client PTY terminal history up / down. |
+| `0`–`9` | Navigation | **Direct Jump** | Direct pane switch when composer input is unfocused. |
+| `Escape` | Input | **Unfocus / Reset** | Unfocuses composer, clears active mouse selection, and resets scrollback. |
+| `Ctrl+c` | Global | **Conditional Copy** | Intercepts `Ctrl+c` to copy highlighted text when an active mouse selection exists. |
+| `Ctrl+c` / `Ctrl+q` | Global | **Clean Exit** | Terminates all child PTYs and cleanly restores terminal state (when no selection is active). |
 
 ### Mouse Controls, Selection & Dual-Tier Clipboard
 - **Click to Focus**: Left-clicking anywhere inside a pane activates and focuses it.
-- **Drag Selection**: Click and drag to select text across any client or coordinator pane. Selection is clamped strictly to the active pane boundary.
+- **Drag Selection**: Click and drag to select text across any client or coordinator pane. Selection is clamped strictly to the active pane boundary, preventing text bleed across adjacent columns.
 - **Dual-Tier Clipboard Export**:
-  - **Tier 1 (OSC 52)**: High-speed native terminal clipboard export supported across local terminals and SSH sessions.
+  - **Tier 1 (OSC 52)**: High-speed native terminal clipboard export supported across local terminals and SSH sessions (`\x1b]52;c;<base64>\x07`).
   - **Tier 2 (OS System Fallback)**: Automatically falls back to native system clipboard tools (`wl-copy`, `xclip`, `pbcopy`) if OSC 52 is unavailable.
-- **Quick Copy**: Press `Ctrl+c` or right-click to copy highlighted text.
+- **Quick Copy**: Press `Ctrl+c`, press `<prefix>` then `y`, or right-click to copy highlighted text.
 
-### Process Supervision & Pane Respawns
+### Process Supervision & Crash Detection
 Multi-LLM actively monitors the PTY file descriptors of all client processes:
-- If an agent exits or crashes, the pane border indicates `[EXITED]` with its exit code.
-- Press `Ctrl+b` followed by `r` to respawn the failed process in place without restarting Multi-LLM.
+- If an agent exits or crashes, the pane border dynamically displays `[EXITED: <code>]` with its exit status code.
+- Terminal state teardown is safely managed via RAII guards (`TerminalGuard`), ensuring raw terminal mode, mouse capture, and cursor visibility are always restored on process termination.
 
 ---
 
