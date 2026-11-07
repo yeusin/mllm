@@ -164,7 +164,20 @@ clients:
   - `instructions` *(string)*: Persona and domain instructions injected on client initialization.
   - `extra_args` *(array of strings, optional)*: Additional arguments appended to the spawned command.
 
-*Template Variables*: Placeholders such as `{chat_file}`, `{prefix_key}`, `{name}`, `{role}`, `{command}`, and `{number}` in `general_instructions` and client `instructions` are automatically interpolated with values from the configuration when startup instructions are set. Raw JSON syntax such as `{"id": ...}` is safely preserved.
+#### Dynamic Instruction Template Variables
+Both `general_instructions` and client `instructions` support dynamic placeholder interpolation at runtime. This avoids hardcoding paths, role names, or shortcuts across configuration sections:
+
+| Variable | Aliases | Description |
+| :--- | :--- | :--- |
+| `{chat_file}` | `{chatfile}` | Interpolates the shared event log path (e.g., `shared_chat.jsonl`). |
+| `{prefix_key}` | `{prefixkey}` | Interpolates the configured tmux-style prefix key (e.g., `ctrl+b`). |
+| `{name}` | `{client_name}` | Interpolates the specific client agent identifier (e.g., `Architect`). |
+| `{role}` | `{client_role}` | Interpolates the agent's assigned role description (e.g., `Lead Architect`). |
+| `{command}` | `{client_command}` | Interpolates the executable binary name (e.g., `agy`). |
+| `{number}` | `{client_number}` | Interpolates the client pane index number (e.g., `1`). |
+
+> [!NOTE]
+> Placeholder matching supports internal spacing (e.g. `{ chat_file }`) and safely preserves unmatched curly braces and raw JSON schemas (such as `{"id": "<uuid>"}`).
 
 An example configuration is provided in `mllm.yaml.example`. Copy it to `mllm.yaml` to customize your multi-agent environment.
 
@@ -208,6 +221,26 @@ Every message exchanged across users, coordinator, or autonomous agents is an at
    - A visual boundary marker is emitted:  
      `=== [Active Session: Only reacting to new chat entered after this mark] ===`
    - Autonomous reactions only fire on newly appended log events.
+
+### 3.3 Atomic Lazy Instruction Injection & Context Optimization
+Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy Instruction Injection**:
+
+1. **Zero Event-Log Pollution**: Startup instructions are never written as synthetic rows into `shared_chat.jsonl`. The shared chat stream contains exclusively genuine human-operator and autonomous peer communications.
+2. **Deferred Composite Prompting**: Agents remain uninitialized in memory until the Center Coordinator routes their very first task prompt.
+3. **Atomic Composite Injection**: On that initial assignment, the system synthesizes and injects an atomic composite prompt combining interpolated general protocol, role instructions, and the task payload:
+   ```text
+   [General Instructions & Protocol]
+   <Interpolated General Protocol>
+
+   [Role Instructions]
+   Name: <AgentName>
+   Role: <AgentRole>
+   <Interpolated Role Specifics>
+
+   Task from <Sender> (<Role>): <Content> [Ref: <UUID>]
+   ```
+4. **Token Context Efficiency**: Subsequent task prompts routed to the initialized agent deliver only the direct task content (`Task from ...`), conserving critical LLM context window tokens and eliminating redundant instruction reprocessing.
+5. **Cold & Warm Start Parity**: Guarantees identical, predictable agent initialization behavior whether starting from an empty event log or resuming a long-running multi-agent session.
 
 ---
 
