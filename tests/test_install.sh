@@ -124,7 +124,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     with open(archive_path, "rb") as f:
         valid_sha = hashlib.sha256(f.read()).hexdigest()
 
-    sha_path = archive_path + ".sha256"
+    sha_name = "mllm-x86_64-unknown-linux-gnu.sha256"
+    sha_path = os.path.join(srv_dir, "latest", "download", sha_name)
     with open(sha_path, "w") as f:
         f.write(f"{valid_sha}  {archive_name}\n")
 

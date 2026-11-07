@@ -29,6 +29,7 @@ clients:
       Evaluate system language choices, concurrency patterns, and framework tradeoffs.
       Direct security, edge cases, and audit concerns to @Reviewer in the shared log.
       Direct ecosystem, crate, and benchmark investigations to @Researcher in the shared log.
+      Direct architecture specifications, API documentation requirements, and release notes drafting to @TechnicalWriter in the shared log.
 
   - number: 2
     name: Reviewer
@@ -39,6 +40,7 @@ clients:
       Audit reliability, error handling, memory safety, and maintenance overhead.
       Direct architectural redesign questions to @Architect in the shared log.
       Direct benchmark verification requests to @Researcher in the shared log.
+      Direct documentation accuracy reviews, missing edge-case coverage, and verification corrections to @TechnicalWriter in the shared log.
 
   - number: 3
     name: Researcher
@@ -49,6 +51,7 @@ clients:
       Analyze cross-platform tooling, crate/package benchmarks, and developer velocity tradeoffs.
       Direct architectural implications to @Architect in the shared log.
       Direct compliance and security findings to @Reviewer in the shared log.
+      Direct benchmark summaries, performance analysis reports, and research documentation to @TechnicalWriter in the shared log.
 
   - number: 4
     name: TechnicalWriter

@@ -141,9 +141,11 @@ compute_sha256() {
 verify_checksum() {
   _archive="$1"
   _checksum_url="$2"
+  _fallback_checksum_url="${3:-}"
   _checksum_file="$TMP_DIR/checksum.sha256"
 
-  if download "$_checksum_url" "$_checksum_file" 2>/dev/null; then
+  if download "$_checksum_url" "$_checksum_file" 2>/dev/null || \
+     ( [ -n "$_fallback_checksum_url" ] && download "$_fallback_checksum_url" "$_checksum_file" 2>/dev/null ); then
     EXPECTED_HASH="$(awk '{print $1}' "$_checksum_file")"
     if ACTUAL_HASH="$(compute_sha256 "$_archive")"; then
       if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
@@ -166,19 +168,21 @@ BINARY=""
 if [ "$LOCAL_BUILD" -eq 0 ]; then
   if [ "$VERSION" = "latest" ]; then
     DOWNLOAD_URL="${BASE_URL}/latest/download/mllm-${TARGET}.tar.gz"
-    CHECKSUM_URL="${BASE_URL}/latest/download/mllm-${TARGET}.tar.gz.sha256"
+    CHECKSUM_URL="${BASE_URL}/latest/download/mllm-${TARGET}.sha256"
+    FALLBACK_CHECKSUM_URL="${BASE_URL}/latest/download/mllm-${TARGET}.tar.gz.sha256"
   else
     case "$VERSION" in
       v*) TAG="$VERSION" ;;
       *)  TAG="v$VERSION" ;;
     esac
     DOWNLOAD_URL="${BASE_URL}/download/${TAG}/mllm-${TARGET}.tar.gz"
-    CHECKSUM_URL="${BASE_URL}/download/${TAG}/mllm-${TARGET}.tar.gz.sha256"
+    CHECKSUM_URL="${BASE_URL}/download/${TAG}/mllm-${TARGET}.sha256"
+    FALLBACK_CHECKSUM_URL="${BASE_URL}/download/${TAG}/mllm-${TARGET}.tar.gz.sha256"
   fi
 
   echo "Attempting to download mllm (${TARGET}) from GitHub releases..."
   if download "$DOWNLOAD_URL" "$TMP_DIR/mllm.tar.gz" 2>/dev/null; then
-    verify_checksum "$TMP_DIR/mllm.tar.gz" "$CHECKSUM_URL"
+    verify_checksum "$TMP_DIR/mllm.tar.gz" "$CHECKSUM_URL" "$FALLBACK_CHECKSUM_URL"
     tar -xzf "$TMP_DIR/mllm.tar.gz" -C "$TMP_DIR"
     EXTRACTED_BIN="$(find "$TMP_DIR" -type f -name mllm | head -n 1)"
     if [ -n "$EXTRACTED_BIN" ] && [ -f "$EXTRACTED_BIN" ]; then
@@ -188,11 +192,15 @@ if [ "$LOCAL_BUILD" -eq 0 ]; then
     # On macOS, if architecture-specific binary download fails, attempt universal binary
     if [ "$OS_FAMILY" = "apple-darwin" ]; then
       UNIVERSAL_URL="${BASE_URL}/latest/download/mllm-universal-apple-darwin.tar.gz"
+      UNIVERSAL_CHECKSUM="${BASE_URL}/latest/download/mllm-universal-apple-darwin.sha256"
+      UNIVERSAL_FALLBACK_CHECKSUM="${BASE_URL}/latest/download/mllm-universal-apple-darwin.tar.gz.sha256"
       if [ "$VERSION" != "latest" ]; then
         UNIVERSAL_URL="${BASE_URL}/download/${TAG}/mllm-universal-apple-darwin.tar.gz"
+        UNIVERSAL_CHECKSUM="${BASE_URL}/download/${TAG}/mllm-universal-apple-darwin.sha256"
+        UNIVERSAL_FALLBACK_CHECKSUM="${BASE_URL}/download/${TAG}/mllm-universal-apple-darwin.tar.gz.sha256"
       fi
       if download "$UNIVERSAL_URL" "$TMP_DIR/mllm.tar.gz" 2>/dev/null; then
-        verify_checksum "$TMP_DIR/mllm.tar.gz" "${UNIVERSAL_URL}.sha256"
+        verify_checksum "$TMP_DIR/mllm.tar.gz" "$UNIVERSAL_CHECKSUM" "$UNIVERSAL_FALLBACK_CHECKSUM"
         tar -xzf "$TMP_DIR/mllm.tar.gz" -C "$TMP_DIR"
         EXTRACTED_BIN="$(find "$TMP_DIR" -type f -name mllm | head -n 1)"
         if [ -n "$EXTRACTED_BIN" ] && [ -f "$EXTRACTED_BIN" ]; then
