@@ -61,6 +61,12 @@ Multi-LLM dynamically and symmetrically arranges arbitrary client panes around t
 
 Configuration is managed via `mllm.yaml` in the project root or passed via `--config <path>`.
 
+To initialize `mllm.yaml` interactively by assigning available LLM clients (`claude`, `codex`, `opencode`, `agy`) to each role:
+```bash
+mllm init
+```
+If `mllm.yaml` already exists in the project, `init` skips creation unless `-f` / `--force` is provided. Alternatively, an example template is available at `mllm.yaml.example`.
+
 ### 2.1 YAML Schema & Multi-Agent Example
 
 ```yaml
@@ -336,13 +342,13 @@ cargo test
 git clone git@github.com:yeusin/mllm.git
 cd mllm
 
-# Copy example configuration
-cp mllm.yaml.example mllm.yaml
-
 # Build optimized binary
 cargo build --release
 
-# Run with default configuration (mllm.yaml)
+# Initialize configuration interactively (assign claude, codex, opencode, or agy to each role)
+./target/release/mllm init
+
+# Run with configuration (mllm.yaml)
 ./target/release/mllm
 ```
 

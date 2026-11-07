@@ -986,3 +986,68 @@ async fn test_realtime_thinking_indicator_lifecycle() {
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_init_command_interactive_role_assignment() {
+    use mllm::config::{load_config, run_init, AVAILABLE_CLIENTS};
+    use std::fs;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_integration_init_{}", std::process::id()));
+    let _ = fs::create_dir_all(&tmp_dir);
+    let target_yaml = tmp_dir.join("mllm.yaml");
+
+    assert!(!target_yaml.exists());
+
+    // User assigns:
+    // Role 1 (Architect): claude
+    // Role 2 (Reviewer): codex
+    // Role 3 (Researcher): opencode
+    // Role 4 (Copywriter): agy
+    // Role 5 (Designer): claude
+    // Role 6 (Marketer): codex
+    let mut user_inputs = "claude\ncodex\nopencode\nagy\nclaude\ncodex\n".as_bytes();
+    let mut console_output = Vec::new();
+
+    run_init(&mut user_inputs, &mut console_output, &target_yaml, false)
+        .expect("run_init should succeed on non-existent mllm.yaml");
+
+    assert!(target_yaml.exists(), "mllm.yaml must be created");
+
+    let cfg = load_config(&target_yaml).expect("Generated mllm.yaml must be valid YAML");
+    assert_eq!(cfg.chat_file, "shared_chat.jsonl");
+    assert_eq!(cfg.clients.len(), 6);
+    assert_eq!(cfg.clients[0].command, "claude");
+    assert_eq!(cfg.clients[1].command, "codex");
+    assert_eq!(cfg.clients[2].command, "opencode");
+    assert_eq!(cfg.clients[3].command, "agy");
+    assert_eq!(cfg.clients[4].command, "claude");
+    assert_eq!(cfg.clients[5].command, "codex");
+
+    for client in &cfg.clients {
+        assert!(
+            AVAILABLE_CLIENTS.contains(&client.command.as_str()),
+            "Command '{}' must be one of the available LLM clients",
+            client.command
+        );
+    }
+
+    // Attempting to run init again without force skips recreation
+    let mut repeat_input = "agy\nagy\nagy\nagy\nagy\nagy\n".as_bytes();
+    let mut skip_output = Vec::new();
+    run_init(&mut repeat_input, &mut skip_output, &target_yaml, false).unwrap();
+    let skip_msg = String::from_utf8_lossy(&skip_output);
+    assert!(skip_msg.contains("already exists in the project. Skipping creation"));
+
+    // File content remains unchanged
+    let unchanged_cfg = load_config(&target_yaml).unwrap();
+    assert_eq!(unchanged_cfg.clients[0].command, "claude");
+
+    // Overwriting with force = true
+    let mut force_input = "agy\nagy\nagy\nagy\nagy\nagy\n".as_bytes();
+    let mut force_output = Vec::new();
+    run_init(&mut force_input, &mut force_output, &target_yaml, true).unwrap();
+    let overwritten_cfg = load_config(&target_yaml).unwrap();
+    assert_eq!(overwritten_cfg.clients[0].command, "agy");
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}

@@ -1,12 +1,12 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use mllm::app::AppState;
-use mllm::config::load_config;
+use mllm::config::{load_config, run_init};
 use mllm::ui;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, stdout};
@@ -22,9 +22,26 @@ use tokio::sync::mpsc;
     about = "Tmux-Style Multi-LLM Client Coordination Tool"
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Path to YAML configuration file
     #[arg(short, long, default_value = "mllm.yaml")]
     config: PathBuf,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Initialize a new mllm.yaml configuration file
+    Init {
+        /// Target path for configuration file
+        #[arg(short, long, default_value = "mllm.yaml")]
+        output: PathBuf,
+
+        /// Overwrite configuration file if it already exists
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// RAII guard to guarantee terminal restoration on normal exit, error return, or unwind
@@ -47,12 +64,25 @@ impl Drop for TerminalGuard {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if let Some(Commands::Init { output, force }) = cli.command {
+        let stdin = io::stdin();
+        let mut stdout = io::stdout();
+        return run_init(&mut stdin.lock(), &mut stdout, &output, force);
+    }
+
     // Determine config path and its parent directory
     let config_path = cli.config;
     let config_dir = config_path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
+
+    if !config_path.exists() {
+        eprintln!(
+            "Notice: Configuration file '{}' not found. Run 'mllm init' to create one.",
+            config_path.display()
+        );
+    }
 
     let config = load_config(&config_path)?;
 
