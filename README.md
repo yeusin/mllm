@@ -27,7 +27,7 @@ Multi-LLM is a Rust-based terminal multiplexer and multi-agent orchestration TUI
 │  Pane 3: Researcher      │  [Composer: @Architect ]  │                           │
 │  [Role: Researcher]      │  [Tab: Cycle Responder]   │                           │
 ├──────────────────────────┴───────────────────────────┴───────────────────────────┤
-│ [mllm] 0:Coordinator*  1:Architect  2:Reviewer  3:Researcher [Depth: 0/100] [C-b]│
+│ [mllm] 0:Coordinator*  1:Architect  2:Reviewer  3:Researcher [Depth: 0/100] [Alt]│
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,22 +57,22 @@ Multi-LLM dynamically and symmetrically arranges arbitrary client panes around t
 
 ---
 
-## 2. Configuration Specification (`mllm.yaml`)
+## 2. Configuration Specification (`$HOME/.config/mllm/mllm.yaml`)
 
-Configuration is managed via `mllm.yaml` in the project root or passed via `--config <path>`.
+Configuration is centralized at `$HOME/.config/mllm/mllm.yaml` (automatically scaffolded on first launch if not present), or overridden via `--config <path>` (`-c <path>`).
 
-To initialize `mllm.yaml` interactively by assigning available LLM clients (`claude`, `codex`, `opencode`, `agy`) to each role:
+To initialize or customize configuration interactively by assigning available LLM clients (`claude`, `codex`, `opencode`, `agy`) to each role:
 ```bash
 mllm init
 ```
-If `mllm.yaml` already exists in the project, `init` skips creation unless `-f` / `--force` is provided. Alternatively, an example template is available at `mllm.yaml.example`.
+If `$HOME/.config/mllm/mllm.yaml` already exists, `init` skips creation unless `-f` / `--force` is provided. Alternatively, an example template is available at `mllm.yaml.example`.
 
 ### 2.1 YAML Schema & Multi-Agent Example
 
 ```yaml
-# Multi-LLM Configuration
-chat_file: shared_chat.jsonl
-prefix_key: "ctrl+b"
+# Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
+chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"
+prefix_key: "alt"
 
 # General instructions shared across all LLM clients
 general_instructions: |
@@ -153,8 +153,8 @@ clients:
 ```
 
 ### 2.2 Configuration Fields
-- `chat_file` *(string, default: `"shared_chat.jsonl"`)*: Path to the shared JSONL coordination log.
-- `prefix_key` *(string, default: `"ctrl+b"`)*: Normalized tmux prefix combination (`ctrl+b`, `Ctrl+B`, `c-b`, `C-b`, `ctrl-a`, `C-a`).
+- `chat_file` *(string, default: `"$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"`)*: Path to the shared JSONL coordination log, isolated per working directory filesystem device and inode (`{dev}_{ino}`, with `{working_dir_inode}` supported as a compatibility alias).
+- `prefix_key` *(string, default: `"alt"`)*: Prefix combination (`"alt"`, `"alt+<key>"`, or legacy `"ctrl+<key>"` / `"c-<key>"`).
 - `general_instructions` *(string)*: Protocol instructions injected into each client's prompt context.
 - `clients` *(array)*:
   - `number` *(usize, 1..9)*: Unique pane number (`0` is reserved for Coordinator; duplicates auto-reassign).
@@ -169,8 +169,8 @@ Both `general_instructions` and client `instructions` support dynamic placeholde
 
 | Variable | Aliases | Description |
 | :--- | :--- | :--- |
-| `{chat_file}` | `{chatfile}` | Interpolates the shared event log path (e.g., `shared_chat.jsonl`). |
-| `{prefix_key}` | `{prefixkey}` | Interpolates the configured tmux-style prefix key (e.g., `ctrl+b`). |
+| `{chat_file}` | `{chatfile}` | Interpolates the resolved absolute shared event log path (e.g., `/home/user/.config/mllm/history/123456/chat.jsonl`). |
+| `{prefix_key}` | `{prefixkey}` | Interpolates the configured prefix key (e.g., `alt`). |
 | `{name}` | `{client_name}` | Interpolates the specific client agent identifier (e.g., `Architect`). |
 | `{role}` | `{client_role}` | Interpolates the agent's assigned role description (e.g., `Lead Architect`). |
 | `{command}` | `{client_command}` | Interpolates the executable binary name (e.g., `agy`). |
@@ -279,7 +279,7 @@ Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy In
 
 | Shortcut | Scope | Action | Description |
 | :--- | :--- | :--- | :--- |
-| `<prefix>` (default `Ctrl+b`) | Global | **Arm Prefix** | Arms prefix mode; status bar highlights `[PREFIX]`. |
+| `<prefix>` (default `Alt`) | Global | **Arm Prefix** | Arms prefix mode; status bar highlights `[PREFIX]`. |
 | `<prefix>` then `0` | Global | **Focus Coordinator** | Focuses Center Coordinator chat and composer input. |
 | `<prefix>` then `1`–`9` | Global | **Focus Client Pane** | Switches focus directly to Client Pane 1 through 9. |
 | `<prefix>` then `o` / `n` | Global | **Next Pane** | Cycles focus to next pane numerically. |
@@ -507,7 +507,7 @@ cargo build --release
 # Initialize configuration interactively (assign claude, codex, opencode, or agy to each role)
 ./target/release/mllm init
 
-# Run with configuration (mllm.yaml)
+# Run with centralized configuration ($HOME/.config/mllm/mllm.yaml)
 ./target/release/mllm
 ```
 

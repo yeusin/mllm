@@ -59,7 +59,7 @@ Multi-LLM multiplexes multiple terminal-based AI agents (such as Google Antigrav
 │  [Role: Researcher]      │  [Composer: @Architect ]  │  [Growth & Campaign]      │
 │  (PTY: agy)              │  [Tab: Cycle Responder]   │  (PTY: agy)               │
 ├──────────────────────────┴───────────────────────────┴───────────────────────────┤
-│ [mllm] 0:Coordinator*  1:Architect  2:Reviewer  3:Researcher [Depth: 0/100] [C-b]│
+│ [mllm] 0:Coordinator*  1:Architect  2:Reviewer  3:Researcher [Depth: 0/100] [Alt]│
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -76,7 +76,7 @@ Client panes are arranged symmetrically on the left and right sides of the centr
 - If 6 clients are configured: Left [Pane 1, Pane 2, Pane 3], Center [Pane 0: Coordinator], Right [Pane 4, Pane 5, Pane 6].
 
 ### Shared JSONL Event Bus
-All communication between the user and agents occurs asynchronously via an append-only JSON Lines log file (default: `shared_chat.jsonl`). Multi-LLM monitors this file using non-blocking, $O(1)$ byte-offset polling with file locking to ensure safe concurrent access.
+All communication between the user and agents occurs asynchronously via an append-only JSON Lines log file (default: `$HOME/.config/mllm/history/{working_dir_inode}/chat.jsonl`). Multi-LLM monitors this file using non-blocking, $O(1)$ byte-offset polling with file locking to ensure safe concurrent access. Each session log is automatically isolated by the filesystem inode of the invocation working directory.
 
 ---
 
@@ -184,14 +184,15 @@ Starting with release **v0.2.1**, Multi-LLM adopts cryptographic GitHub Artifact
 
 ---
 
-## 3. Configuration Specification (`mllm.yaml`)
+## 3. Configuration Specification (`$HOME/.config/mllm/mllm.yaml`)
 
 ### Configuration Schema
-Multi-LLM reads configuration from `mllm.yaml` in the working directory (or from `--config <path>`).
+Multi-LLM reads configuration from centralized `$HOME/.config/mllm/mllm.yaml` (automatically scaffolded on first launch if not present), or overridden via `--config <path>` (`-c <path>`).
 
 ```yaml
-chat_file: "shared_chat.jsonl"
-prefix_key: "ctrl+b"
+# Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
+chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"
+prefix_key: "alt"
 
 # Universal coordination protocol injected into all agents
 general_instructions: |
@@ -249,8 +250,8 @@ Multi-LLM v0.2.0 introduces runtime template interpolation for system instructio
 
 | Variable | Aliases | Description | Example Replacement |
 | :--- | :--- | :--- | :--- |
-| `{chat_file}` | `{chatfile}` | Path to the shared JSONL event log | `shared_chat.jsonl` |
-| `{prefix_key}` | `{prefixkey}` | Configured tmux-style prefix key | `ctrl+b` |
+| `{chat_file}` | `{chatfile}` | Resolved path to the inode-isolated shared JSONL event log | `/home/user/.config/mllm/history/123456/chat.jsonl` |
+| `{prefix_key}` | `{prefixkey}` | Configured prefix key | `alt` |
 | `{name}` | `{client_name}` | Name assigned to the client agent | `Architect` |
 | `{role}` | `{client_role}` | Role description of the client agent | `Lead Architect` |
 | `{command}` | `{client_command}` | Command executable for the client | `agy` |
@@ -342,7 +343,7 @@ When the prefix key is armed, the status bar displays an illuminated `[PREFIX]` 
 
 | Shortcut | Scope | Action | Description |
 | :--- | :--- | :--- | :--- |
-| `<prefix>` (default `Ctrl+b`) | Global | **Arm Prefix** | Arms prefix mode; status bar highlights `[PREFIX]`. |
+| `<prefix>` (default `Alt`) | Global | **Arm Prefix** | Arms prefix mode; status bar highlights `[PREFIX]`. |
 | `<prefix>` then `0` | Global | **Focus Coordinator** | Focuses Center Coordinator chat and composer input. |
 | `<prefix>` then `1`–`9` | Global | **Focus Client Pane** | Switches focus directly to Client Pane 1 through 9. |
 | `<prefix>` then `o` / `n` | Global | **Next Pane** | Cycles focus to next pane numerically. |
@@ -393,12 +394,13 @@ On Unix platforms, attempting to overwrite a running binary directly triggers `E
 - If your enterprise environment blocks external connections or utilizes an SSL inspection proxy, ensure `curl` or `wget` is configured with appropriate certificates in `/etc/ssl/certs`.
 
 ### Shared Log File Recovery & Dead-Letter Log
-- If a malformed JSON line is appended to `shared_chat.jsonl` (e.g. from an experimental manual tool), Multi-LLM skips the corrupted record, logs the malformed content to `.mllm_dead_letter.jsonl`, and continues processing subsequent lines without interruption.
+- If a malformed JSON line is appended to the shared chat log (e.g. from an experimental manual tool), Multi-LLM skips the corrupted record, logs the malformed content to `.mllm_dead_letter.jsonl`, and continues processing subsequent lines without interruption.
 - The shared log can be safely truncated or rotated when Multi-LLM is stopped.
 
-### Upgrading Existing Installations for Rich Formatting
-- Because `mllm.yaml` is local runtime configuration ignored by version control (`.gitignore`), upgrading the `mllm` binary preserves existing configuration files without overwriting them.
-- If rich formatting (Markdown, code blocks, ANSI colors, emojis) does not render in your existing sessions, update `general_instructions` item 7 in your local `mllm.yaml`:
+### Upgrading Existing Installations & Configuration Migration
+- Configuration is centralized at `$HOME/.config/mllm/mllm.yaml` (automatically scaffolded on first launch). If you maintain an existing local `mllm.yaml`, you can migrate it to `$HOME/.config/mllm/mllm.yaml` or launch with `--config ./mllm.yaml`.
+- Shared conversation logs are automatically partitioned per working directory filesystem device and inode at `$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl` (with `{working_dir_inode}` supported as a compatibility alias).
+- To enable rich formatting (Markdown, code blocks, ANSI colors, emojis) in an existing configuration, ensure `general_instructions` item 7 in your `$HOME/.config/mllm/mllm.yaml` includes:
   ```yaml
   7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
   ```

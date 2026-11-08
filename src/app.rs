@@ -75,16 +75,11 @@ impl AppState {
         config_dir: &Path,
         event_tx: UnboundedSender<()>,
     ) -> Result<Self> {
-        let parsed_prefix = parse_prefix_key(&config.prefix_key);
-        let chat_file_path = config_dir.join(&config.chat_file);
+        let parsed_prefix = parse_prefix_key(&config.prefix_key)?;
+        let chat_file_path = config.resolve_chat_file_path(config_dir)?;
 
         // Ensure shared chat log file exists on disk (creates it on first run)
-        if let Some(parent) = chat_file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if !chat_file_path.exists() {
-            let _ = std::fs::File::create(&chat_file_path);
-        }
+        crate::config::ensure_chat_log_exists(&chat_file_path)?;
 
         // Load existing chat history
         let (chat_history, initial_message_ids) = load_messages(&chat_file_path)?;
@@ -226,19 +221,43 @@ impl AppState {
             return true;
         }
 
-        // Instant Pane Switch: Alt+0 .. Alt+9
-        if let (true, KeyCode::Char(c)) = (modifiers.contains(KeyModifiers::ALT), code)
-            && let Some(digit) = c.to_digit(10) {
-                let target_pane = digit as usize;
-                if target_pane == 0 || self.clients.iter().any(|c| c.number == target_pane) {
-                    self.active_pane = target_pane;
-                    if target_pane == 0 {
-                        self.input_focused = true;
+        // Instant Pane Switch & Shortcuts: Alt+0 .. Alt+9, Alt+o / Alt+n, Alt+p, Alt+y
+        if modifiers.contains(KeyModifiers::ALT) {
+            if let KeyCode::Char(c) = code
+                && let Some(digit) = c.to_digit(10) {
+                    let target_pane = digit as usize;
+                    if target_pane == 0 || self.clients.iter().any(|c| c.number == target_pane) {
+                        self.active_pane = target_pane;
+                        if target_pane == 0 {
+                            self.input_focused = true;
+                        }
+                        self.prefix_active = false;
+                        return false;
                     }
-                    self.prefix_active = false;
+                }
+
+            match code {
+                KeyCode::Char('o') | KeyCode::Char('n') => {
+                    self.cycle_pane(true);
                     return false;
                 }
+                KeyCode::Char('p') => {
+                    self.cycle_pane(false);
+                    return false;
+                }
+                KeyCode::Char('y') => {
+                    if let Some(text) = self.mouse_selection.as_ref()
+                        .filter(|s| s.start != s.end)
+                        .and_then(|s| self.extract_selected_text(s))
+                        .filter(|t| !t.is_empty())
+                    {
+                        self.copy_text(&text);
+                    }
+                    return false;
+                }
+                _ => {}
             }
+        }
 
         // Prefix Mode Handling
         if self.prefix_active {
@@ -892,6 +911,9 @@ impl AppState {
                     }
                 }
                 KeyCode::Char(c) => {
+                    if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) {
+                        return;
+                    }
                     if self.cursor_pos > self.composer_input.len()
                         || !self.composer_input.is_char_boundary(self.cursor_pos)
                     {
@@ -1171,7 +1193,10 @@ impl AppState {
                         self.initialized_clients.insert(idx);
                         if let Some(client_cfg) = self.config.clients.get(idx) {
                             let inst = client_cfg.instructions.trim();
-                            let vars = self.config.instruction_vars_for(client_cfg);
+                            let mut vars = self.config.instruction_vars_for(client_cfg);
+                            let chat_str = self.chat_file_path.display().to_string();
+                            vars.insert("chat_file".to_string(), chat_str.clone());
+                            vars.insert("chatfile".to_string(), chat_str);
                             let startup_instructions = build_startup_instructions_with_vars(
                                 &self.config.general_instructions,
                                 &client_cfg.name,
@@ -1503,7 +1528,7 @@ mod tests {
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b"),
+            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1669,7 +1694,7 @@ mod tests {
                     },
                 ],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b"),
+            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1768,7 +1793,7 @@ mod tests {
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b"),
+            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1881,7 +1906,7 @@ mod tests {
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b"),
+            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1949,7 +1974,7 @@ mod tests {
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b"),
+            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
             active_pane: 0,
             prefix_active: true,
             input_focused: true,

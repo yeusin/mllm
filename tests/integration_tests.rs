@@ -21,8 +21,8 @@ fn test_config_loading_and_defaults() {
         Path::new("mllm.yaml.example")
     };
     let cfg = load_config(config_path).expect("Failed to load mllm.yaml or mllm.yaml.example");
-    assert_eq!(cfg.chat_file, "shared_chat.jsonl");
-    assert_eq!(cfg.prefix_key, "ctrl+b");
+    assert_eq!(cfg.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
+    assert_eq!(cfg.prefix_key, "alt");
     assert!(!cfg.clients.is_empty());
     assert_eq!(cfg.clients[0].number, 1);
     assert_eq!(cfg.clients[0].name, "Architect");
@@ -1179,7 +1179,8 @@ fn test_init_command_interactive_role_assignment() {
     assert!(target_yaml.exists(), "mllm.yaml must be created");
 
     let cfg = load_config(&target_yaml).expect("Generated mllm.yaml must be valid YAML");
-    assert_eq!(cfg.chat_file, "shared_chat.jsonl");
+    assert_eq!(cfg.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
+    assert_eq!(cfg.prefix_key, "alt");
     assert_eq!(cfg.clients.len(), 6);
     assert_eq!(cfg.clients[0].command, "claude");
     assert_eq!(cfg.clients[1].command, "codex");
@@ -1406,6 +1407,271 @@ fn test_rich_markdown_routing_isolation() {
     assert_eq!(targets, vec![1]);
 
     app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_first_launch_config_and_history_scaffolding() {
+    use mllm::app::AppState;
+    use mllm::config::{
+        ensure_default_config_exists, get_working_dir_dev_ino, load_config,
+    };
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_scaffold_{}", uuid::Uuid::new_v4()));
+    let tmp_config_path = tmp_dir.join(".config").join("mllm").join("mllm.yaml");
+
+    // 1. First launch scaffolds default config
+    let created = ensure_default_config_exists(&tmp_config_path).expect("Scaffolding should succeed");
+    assert!(created);
+    assert!(tmp_config_path.exists());
+
+    // 2. Parsed default config matches expected defaults
+    let config = load_config(&tmp_config_path).expect("Scaffolded config should be valid YAML");
+    assert_eq!(config.prefix_key, "alt");
+    assert_eq!(config.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
+
+    // 3. (dev, ino)-based path resolution
+    let resolved_chat = config.resolve_chat_file_path(tmp_config_path.parent().unwrap()).unwrap();
+    let (dev, ino) = get_working_dir_dev_ino().unwrap();
+    assert!(resolved_chat.to_string_lossy().contains(&format!("{}_{}", dev, ino)));
+    assert!(resolved_chat.to_string_lossy().ends_with("chat.jsonl"));
+
+    // 4. History log creation via AppState::new
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, tmp_config_path.parent().unwrap(), tx)
+        .expect("AppState::new should succeed with scaffolded config");
+    assert!(app.chat_file_path.exists());
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_alt_prefix_and_direct_shortcuts() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
+    use mllm::app::AppState;
+    use mllm::config::{AppConfig, ClientConfig};
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_alt_shortcuts_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let config = AppConfig {
+        chat_file: "test_chat.jsonl".to_string(),
+        prefix_key: "alt".to_string(),
+        general_instructions: String::new(),
+        clients: vec![
+            ClientConfig {
+                number: 1,
+                name: "Architect".to_string(),
+                role: "Lead Architect".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 2,
+                name: "Reviewer".to_string(),
+                role: "Reviewer".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+        ],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, &tmp_dir, tx).unwrap();
+    assert_eq!(app.active_pane, 0);
+
+    // 1. Direct Alt+1 jumps to pane 1
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+    assert_eq!(app.active_pane, 1);
+
+    // 2. Direct Alt+o cycles pane forward
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::ALT));
+    assert_eq!(app.active_pane, 2);
+
+    // 3. Direct Alt+p cycles pane backward
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
+    assert_eq!(app.active_pane, 1);
+
+    // 4. Direct Alt+0 returns to center Coordinator pane
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::ALT));
+    assert_eq!(app.active_pane, 0);
+
+    // 5. Alt+b does NOT activate prefix mode when prefix_key: "alt" (no shadow 'b')
+    assert!(!app.prefix_active);
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+    assert!(!app.prefix_active);
+
+    // 6. Bare Alt modifier event (Kitty keyboard protocol) DOES activate prefix mode
+    app.handle_key_event(KeyEvent::new(
+        KeyCode::Modifier(ModifierKeyCode::LeftAlt),
+        KeyModifiers::ALT,
+    ));
+    assert!(app.prefix_active);
+
+    // 7. Armed prefix mode: follow-up key without modifier executes and disarms prefix
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+    assert_eq!(app.active_pane, 2);
+    assert!(!app.prefix_active);
+
+    // 8. Composer Alt+Enter guard: inserts newline in composer
+    app.active_pane = 0;
+    app.input_focused = true;
+    app.composer_input = "Hello".to_string();
+    app.cursor_pos = 5;
+    app.handle_coordinator_input(KeyCode::Enter, KeyModifiers::ALT);
+    assert_eq!(app.composer_input, "Hello\n");
+    assert_eq!(app.cursor_pos, 6);
+
+    // 9. Composer Alt+x guard: unassigned Alt chord does NOT insert character
+    app.handle_coordinator_input(KeyCode::Char('x'), KeyModifiers::ALT);
+    assert_eq!(app.composer_input, "Hello\n");
+    assert_eq!(app.cursor_pos, 6);
+
+    // 10. Normal typing inserts character
+    app.handle_coordinator_input(KeyCode::Char('!'), KeyModifiers::NONE);
+    assert_eq!(app.composer_input, "Hello\n!");
+    assert_eq!(app.cursor_pos, 7);
+
+    // 11. Alt+y triggers copy without crashing
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT));
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_legacy_config_auto_migration_preservation() {
+    use mllm::config::{ensure_default_config_exists, load_config};
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_mig_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let legacy_yaml = tmp_dir.join("mllm.yaml");
+    let custom_content = r#"
+chat_file: "custom_legacy_log.jsonl"
+prefix_key: "ctrl+a"
+general_instructions: "Custom Instructions"
+clients:
+  - number: 1
+    name: "CustomAgent"
+    role: "Tester"
+    command: "custom_cmd"
+"#;
+    std::fs::write(&legacy_yaml, custom_content).unwrap();
+
+    let target_central = tmp_dir.join(".config").join("mllm").join("mllm.yaml");
+
+    // Temporarily switch cwd to tmp_dir to test auto-migration of ./mllm.yaml
+    let orig_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&tmp_dir).unwrap();
+
+    let migrated = ensure_default_config_exists(&target_central).unwrap();
+    assert!(migrated);
+    assert!(target_central.exists());
+
+    let loaded = load_config(&target_central).unwrap();
+    assert_eq!(loaded.chat_file, "custom_legacy_log.jsonl");
+    assert_eq!(loaded.prefix_key, "ctrl+a");
+    assert_eq!(loaded.clients[0].name, "CustomAgent");
+
+    // Restore original cwd
+    std::env::set_current_dir(&orig_cwd).unwrap();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_dev_ino_cross_mount_collision_isolation() {
+    use mllm::config::AppConfig;
+    use std::path::Path;
+
+    // Simulate two projects at root directory of different mounts (both having st_ino = 2)
+    let template = "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl";
+
+    let dev1: u64 = 64512;
+    let dev2: u64 = 64513;
+    let ino: u64 = 2; // Common ext4 mount root inode
+
+    let path1 = template
+        .replace("{dev}_{ino}", &format!("{}_{}", dev1, ino));
+    let path2 = template
+        .replace("{dev}_{ino}", &format!("{}_{}", dev2, ino));
+
+    assert_ne!(path1, path2);
+    assert!(path1.contains("64512_2"));
+    assert!(path2.contains("64513_2"));
+
+    // Also verify AppConfig template replacement for both tokens
+    let config = AppConfig {
+        chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl".to_string(),
+        ..AppConfig::default()
+    };
+    let resolved = config.resolve_chat_file_path(Path::new(".")).unwrap();
+    assert!(!resolved.to_string_lossy().contains("{dev}_{ino}"));
+    assert!(!resolved.to_string_lossy().contains("{working_dir_inode}"));
+}
+
+#[test]
+fn test_partial_tail_incremental_reader_integrity() {
+    use mllm::chat::{load_messages, load_new_messages_from_offset, ChatMessage};
+    use std::io::Write;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_partial_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let log_path = tmp_dir.join("chat.jsonl");
+
+    // 1. Write one valid JSON message
+    let msg1 = ChatMessage {
+        id: "msg-1".to_string(),
+        reply_to: None,
+        sender: "User".to_string(),
+        role: "Operator".to_string(),
+        message: "First message".to_string(),
+        timestamp: 1000,
+    };
+    let mut file = std::fs::File::create(&log_path).unwrap();
+    writeln!(file, "{}", serde_json::to_string(&msg1).unwrap()).unwrap();
+    file.flush().unwrap();
+
+    let (msgs, offset1) = load_new_messages_from_offset(&log_path, 0).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].id, "msg-1");
+
+    // 2. Write HALF a JSON line (incomplete line, no trailing newline)
+    let half_line = r#"{"id": "msg-2", "reply_to": null, "sender": "Arch"#;
+    file.write_all(half_line.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    // 3. Poll: incremental reader must drop/skip the incomplete line and NOT advance offset
+    let (msgs_half, offset2) = load_new_messages_from_offset(&log_path, offset1).unwrap();
+    assert!(msgs_half.is_empty(), "Partial record must not surface as message");
+    assert_eq!(offset2, offset1, "Offset must not advance past partial line");
+
+    // 4. Complete the rest of the second JSON line + trailing newline
+    let rest_line = r#"itect", "role": "Lead", "message": "Done", "timestamp": 1001}"#;
+    writeln!(file, "{}", rest_line).unwrap();
+    file.flush().unwrap();
+
+    // 5. Poll again: incremental reader loads completed message cleanly
+    let (msgs_complete, offset3) = load_new_messages_from_offset(&log_path, offset1).unwrap();
+    assert_eq!(msgs_complete.len(), 1);
+    assert_eq!(msgs_complete[0].id, "msg-2");
+    assert_eq!(msgs_complete[0].sender, "Architect");
+    assert!(offset3 > offset1);
+
+    // 6. Test load_messages on crash with trailing partial line
+    let half_line2 = r#"{"id": "msg-3", "sender": "crash"#;
+    file.write_all(half_line2.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let (all_msgs, _) = load_messages(&log_path).unwrap();
+    assert_eq!(all_msgs.len(), 2, "load_messages must tolerate trailing partial line");
+
+    drop(file);
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 

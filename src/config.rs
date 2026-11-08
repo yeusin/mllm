@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -32,15 +32,135 @@ pub struct ClientConfig {
 }
 
 fn default_chat_file() -> String {
-    "shared_chat.jsonl".to_string()
+    "$HOME/.config/mllm/history/{working_dir_inode}/chat.jsonl".to_string()
 }
 
 fn default_prefix() -> String {
-    "ctrl+b".to_string()
+    "alt".to_string()
 }
 
 fn default_command() -> String {
     "agy".to_string()
+}
+
+pub fn default_config_dir() -> Result<PathBuf> {
+    if let Some(xdg) = std::env::var("XDG_CONFIG_HOME").ok().filter(|s| !s.trim().is_empty()) {
+        return Ok(PathBuf::from(xdg.trim()).join("mllm"));
+    }
+    if let Some(home) = std::env::var("HOME").ok().filter(|s| !s.trim().is_empty()) {
+        return Ok(PathBuf::from(home.trim()).join(".config").join("mllm"));
+    }
+    bail!("Failed to determine default configuration directory: neither $XDG_CONFIG_HOME nor $HOME environment variable is set.")
+}
+
+pub fn default_config_path() -> Result<PathBuf> {
+    Ok(default_config_dir()?.join("mllm.yaml"))
+}
+
+pub fn get_working_dir_dev_ino() -> Result<(u64, u64)> {
+    let cwd = std::env::current_dir()
+        .with_context(|| "Failed to determine current working directory")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&cwd)
+            .with_context(|| format!("Failed to read filesystem metadata for '{}'", cwd.display()))?;
+        Ok((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        cwd.to_string_lossy().hash(&mut hasher);
+        Ok((0, hasher.finish()))
+    }
+}
+
+pub fn get_working_dir_inode() -> Result<u64> {
+    get_working_dir_dev_ino().map(|(_dev, ino)| ino)
+}
+
+pub fn default_chat_log_dir() -> Result<PathBuf> {
+    let (dev, ino) = get_working_dir_dev_ino()?;
+    let conf_dir = default_config_dir()?;
+    Ok(conf_dir.join("history").join(format!("{}_{}", dev, ino)))
+}
+
+pub fn default_chat_log_path() -> Result<PathBuf> {
+    Ok(default_chat_log_dir()?.join("chat.jsonl"))
+}
+
+pub fn ensure_default_config_exists(config_path: &Path) -> Result<bool> {
+    if config_path.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    // Auto-migration: if legacy local ./mllm.yaml exists in cwd, copy it to the centralized path
+    let legacy_path = Path::new("mllm.yaml");
+    if legacy_path.exists() && legacy_path.is_file() {
+        fs::copy(legacy_path, config_path).with_context(|| {
+            format!(
+                "Failed to migrate legacy configuration from '{}' to '{}'",
+                legacy_path.display(),
+                config_path.display()
+            )
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(config_path, fs::Permissions::from_mode(0o600));
+        }
+        eprintln!(
+            "Notice: Migrated legacy configuration from '{}' to '{}'.",
+            legacy_path.display(),
+            config_path.display()
+        );
+        return Ok(true);
+    }
+
+    let default_config = default_init_config();
+    let yaml_str = serde_yaml::to_string(&default_config)
+        .with_context(|| "Failed to serialize default configuration to YAML")?;
+    fs::write(config_path, yaml_str)
+        .with_context(|| format!("Failed to write default configuration to '{}'", config_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(config_path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(true)
+}
+
+pub fn ensure_chat_log_exists(chat_path: &Path) -> Result<()> {
+    if let Some(parent) = chat_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create chat log directory: {}", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+    }
+    if !chat_path.exists() {
+        fs::File::create(chat_path)
+            .with_context(|| format!("Failed to create chat log file: {}", chat_path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(chat_path, fs::Permissions::from_mode(0o600));
+        }
+    }
+    Ok(())
 }
 
 impl Default for AppConfig {
@@ -55,11 +175,64 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    pub fn resolve_chat_file_path(&self, config_dir: &Path) -> Result<PathBuf> {
+        let trimmed = self.chat_file.trim();
+        if trimmed.is_empty() || trimmed == "default" {
+            return default_chat_log_path();
+        }
+
+        let mut path_str = trimmed.to_string();
+
+        // Perform token replacement within template
+        if path_str.contains("{dev}_{ino}")
+            || path_str.contains("{working_dir_inode}")
+            || path_str.contains("{dev}")
+            || path_str.contains("{ino}")
+        {
+            let (dev, ino) = get_working_dir_dev_ino()?;
+            let dev_ino_str = format!("{}_{}", dev, ino);
+            path_str = path_str.replace("{dev}_{ino}", &dev_ino_str);
+            path_str = path_str.replace("{working_dir_inode}", &dev_ino_str);
+            path_str = path_str.replace("{dev}", &dev.to_string());
+            path_str = path_str.replace("{ino}", &ino.to_string());
+        }
+
+        let expanded = if let Some(stripped) = path_str.strip_prefix("$HOME/") {
+            if let Ok(home) = std::env::var("HOME") {
+                PathBuf::from(home).join(stripped)
+            } else {
+                default_chat_log_path()?
+            }
+        } else if let Some(stripped) = path_str.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                PathBuf::from(home).join(stripped)
+            } else {
+                default_chat_log_path()?
+            }
+        } else {
+            let p = Path::new(&path_str);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                config_dir.join(p)
+            }
+        };
+
+        Ok(expanded)
+    }
+
     /// Builds the standard variable interpolation map for client instruction templates.
     pub fn instruction_vars_for(&self, client: &ClientConfig) -> HashMap<String, String> {
         let mut vars = HashMap::new();
-        vars.insert("chat_file".to_string(), self.chat_file.clone());
-        vars.insert("chatfile".to_string(), self.chat_file.clone());
+        let chat_str = if let Ok(p) = self.resolve_chat_file_path(Path::new(".")) {
+            p.display().to_string()
+        } else if let Ok(p) = default_chat_log_path() {
+            p.display().to_string()
+        } else {
+            self.chat_file.clone()
+        };
+        vars.insert("chat_file".to_string(), chat_str.clone());
+        vars.insert("chatfile".to_string(), chat_str);
         vars.insert("prefix_key".to_string(), self.prefix_key.clone());
         vars.insert("prefixkey".to_string(), self.prefix_key.clone());
         vars.insert("name".to_string(), client.name.clone());
@@ -82,27 +255,64 @@ pub struct ParsedPrefix {
 
 impl ParsedPrefix {
     pub fn matches(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
-        self.code == code && modifiers.contains(self.modifiers)
+        if self.code == KeyCode::Null {
+            // Bare Alt mode (Kitty keyboard protocol): matches bare Alt modifier events
+            return matches!(
+                code,
+                KeyCode::Modifier(
+                    crossterm::event::ModifierKeyCode::LeftAlt
+                        | crossterm::event::ModifierKeyCode::RightAlt
+                )
+            );
+        }
+        modifiers.contains(self.modifiers) && self.code == code
     }
 }
 
-pub fn parse_prefix_key(raw: &str) -> ParsedPrefix {
+pub fn parse_prefix_key(raw: &str) -> Result<ParsedPrefix> {
     let lower = raw.trim().to_lowercase();
-    // Normalize forms like "ctrl+b", "ctrl-b", "c-b"
-    let key_char = if let Some(rest) = lower.strip_prefix("ctrl+") {
-        rest.chars().next().unwrap_or('b')
-    } else if let Some(rest) = lower.strip_prefix("ctrl-") {
-        rest.chars().next().unwrap_or('b')
-    } else if let Some(rest) = lower.strip_prefix("c-") {
-        rest.chars().next().unwrap_or('b')
-    } else {
-        lower.chars().next().unwrap_or('b')
-    };
-
-    ParsedPrefix {
-        modifiers: KeyModifiers::CONTROL,
-        code: KeyCode::Char(key_char),
+    if lower == "alt" || lower == "meta" || lower == "opt" || lower == "option" {
+        return Ok(ParsedPrefix {
+            modifiers: KeyModifiers::ALT,
+            code: KeyCode::Null,
+        });
     }
+
+    if let Some(rest) = lower
+        .strip_prefix("alt+")
+        .or_else(|| lower.strip_prefix("alt-"))
+        .or_else(|| lower.strip_prefix("m-"))
+    {
+        let key_char = rest
+            .chars()
+            .next()
+            .ok_or_else(|| anyhow!("Missing key character after alt prefix in '{}'", raw))?;
+        return Ok(ParsedPrefix {
+            modifiers: KeyModifiers::ALT,
+            code: KeyCode::Char(key_char),
+        });
+    }
+
+    // Normalize forms like "ctrl+b", "ctrl-b", "c-b"
+    if let Some(rest) = lower
+        .strip_prefix("ctrl+")
+        .or_else(|| lower.strip_prefix("ctrl-"))
+        .or_else(|| lower.strip_prefix("c-"))
+    {
+        let key_char = rest
+            .chars()
+            .next()
+            .ok_or_else(|| anyhow!("Missing key character after ctrl prefix in '{}'", raw))?;
+        return Ok(ParsedPrefix {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char(key_char),
+        });
+    }
+
+    bail!(
+        "Invalid prefix_key configuration '{}'. Expected 'alt', 'alt+<key>', or 'ctrl+<key>'.",
+        raw
+    )
 }
 
 pub fn load_config(path: &Path) -> Result<AppConfig> {
@@ -352,8 +562,23 @@ pub fn run_init<R: BufRead, W: Write>(
     let yaml_str = serde_yaml::to_string(&config)
         .with_context(|| "Failed to serialize configuration to YAML")?;
 
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+    }
+
     fs::write(output_path, yaml_str)
         .with_context(|| format!("Failed to write configuration file to '{}'", output_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(output_path, fs::Permissions::from_mode(0o600));
+    }
 
     writeln!(
         writer,
@@ -424,17 +649,146 @@ mod tests {
 
     #[test]
     fn test_parse_prefix_key() {
-        let p1 = parse_prefix_key("ctrl+b");
+        let p1 = parse_prefix_key("ctrl+b").unwrap();
         assert!(p1.matches(KeyCode::Char('b'), KeyModifiers::CONTROL));
 
-        let p2 = parse_prefix_key("Ctrl+B");
+        let p2 = parse_prefix_key("Ctrl+B").unwrap();
         assert!(p2.matches(KeyCode::Char('b'), KeyModifiers::CONTROL));
 
-        let p3 = parse_prefix_key("C-a");
+        let p3 = parse_prefix_key("C-a").unwrap();
         assert!(p3.matches(KeyCode::Char('a'), KeyModifiers::CONTROL));
 
-        let p4 = parse_prefix_key("ctrl-x");
+        let p4 = parse_prefix_key("ctrl-x").unwrap();
         assert!(p4.matches(KeyCode::Char('x'), KeyModifiers::CONTROL));
+
+        let p_alt = parse_prefix_key("alt").unwrap();
+        assert_eq!(p_alt.code, KeyCode::Null);
+        assert_eq!(p_alt.modifiers, KeyModifiers::ALT);
+        // Alt+b does NOT trigger prefix toggle when prefix_key: "alt"
+        assert!(!p_alt.matches(KeyCode::Char('b'), KeyModifiers::ALT));
+        // Bare Alt modifier event DOES trigger prefix toggle
+        assert!(p_alt.matches(
+            KeyCode::Modifier(crossterm::event::ModifierKeyCode::LeftAlt),
+            KeyModifiers::ALT
+        ));
+        assert!(p_alt.matches(
+            KeyCode::Modifier(crossterm::event::ModifierKeyCode::RightAlt),
+            KeyModifiers::ALT
+        ));
+
+        let p_alt_b = parse_prefix_key("alt+b").unwrap();
+        assert!(p_alt_b.matches(KeyCode::Char('b'), KeyModifiers::ALT));
+
+        let p_alt_dash = parse_prefix_key("Alt-B").unwrap();
+        assert!(p_alt_dash.matches(KeyCode::Char('b'), KeyModifiers::ALT));
+
+        let p_meta = parse_prefix_key("m-x").unwrap();
+        assert!(p_meta.matches(KeyCode::Char('x'), KeyModifiers::ALT));
+
+        // Fail-closed checks on unknown formats
+        assert!(parse_prefix_key("foobar").is_err());
+        assert!(parse_prefix_key("invalid+key").is_err());
+        assert!(parse_prefix_key("ctrl+").is_err());
+        assert!(parse_prefix_key("alt-").is_err());
+    }
+
+    #[test]
+    fn test_default_paths_and_scaffolding() {
+        let conf_dir = default_config_dir().unwrap();
+        assert!(conf_dir.ends_with(".config/mllm") || conf_dir.ends_with("mllm"));
+
+        let conf_path = default_config_path().unwrap();
+        assert!(conf_path.ends_with("mllm.yaml"));
+
+        let log_path = default_chat_log_path().unwrap();
+        assert!(log_path.ends_with("chat.jsonl"));
+        assert!(log_path.to_string_lossy().contains("history"));
+
+        let (dev, ino) = get_working_dir_dev_ino().unwrap();
+        assert!(log_path.to_string_lossy().contains(&format!("{}_{}", dev, ino)));
+
+        // Test scaffolding into a temporary directory
+        let tmp_home = std::env::temp_dir().join(format!("test_home_{}", std::process::id()));
+        let tmp_conf = tmp_home.join(".config").join("mllm").join("mllm.yaml");
+        let created = ensure_default_config_exists(&tmp_conf).unwrap();
+        assert!(created);
+        assert!(tmp_conf.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let dir_mode = fs::metadata(tmp_conf.parent().unwrap()).unwrap().mode() & 0o777;
+            assert_eq!(dir_mode, 0o700);
+            let file_mode = fs::metadata(&tmp_conf).unwrap().mode() & 0o777;
+            assert_eq!(file_mode, 0o600);
+        }
+
+        // Loading created config has default values
+        let loaded = load_config(&tmp_conf).unwrap();
+        assert_eq!(loaded.prefix_key, "alt");
+
+        // Subsequent call does not overwrite
+        let created_again = ensure_default_config_exists(&tmp_conf).unwrap();
+        assert!(!created_again);
+
+        // Test chat log path creation
+        let tmp_chat = tmp_home.join(".config").join("mllm").join("history").join("12345_67890").join("chat.jsonl");
+        ensure_chat_log_exists(&tmp_chat).unwrap();
+        assert!(tmp_chat.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let chat_dir_mode = fs::metadata(tmp_chat.parent().unwrap()).unwrap().mode() & 0o777;
+            assert_eq!(chat_dir_mode, 0o700);
+            let chat_file_mode = fs::metadata(&tmp_chat).unwrap().mode() & 0o777;
+            assert_eq!(chat_file_mode, 0o600);
+        }
+
+        let _ = fs::remove_dir_all(&tmp_home);
+    }
+
+    #[test]
+    fn test_chat_file_token_replacement_and_spaces_in_path() {
+        let (dev, ino) = get_working_dir_dev_ino().unwrap();
+        let dev_ino = format!("{}_{}", dev, ino);
+
+        let config = AppConfig {
+            chat_file: "/custom workspace directory with spaces/{dev}_{ino}/sub/log.jsonl".to_string(),
+            ..AppConfig::default()
+        };
+
+        let resolved = config.resolve_chat_file_path(Path::new(".")).unwrap();
+        assert_eq!(
+            resolved,
+            PathBuf::from(format!("/custom workspace directory with spaces/{}/sub/log.jsonl", dev_ino))
+        );
+
+        // Test {working_dir_inode} alias expansion
+        let config_alias = AppConfig {
+            chat_file: "/var/log/mllm/{working_dir_inode}/chat.jsonl".to_string(),
+            ..AppConfig::default()
+        };
+        let resolved_alias = config_alias.resolve_chat_file_path(Path::new(".")).unwrap();
+        assert_eq!(
+            resolved_alias,
+            PathBuf::from(format!("/var/log/mllm/{}/chat.jsonl", dev_ino))
+        );
+
+        // Test instruction_vars_for receives resolved string
+        let client = ClientConfig {
+            number: 1,
+            name: "TestClient".to_string(),
+            role: "Tester".to_string(),
+            command: "agy".to_string(),
+            instructions: String::new(),
+            extra_args: Vec::new(),
+        };
+        let vars = config.instruction_vars_for(&client);
+        let chat_var = vars.get("chat_file").unwrap();
+        assert!(!chat_var.contains("{dev}_{ino}"));
+        assert!(!chat_var.contains("{working_dir_inode}"));
+        assert!(chat_var.contains(&dev_ino));
     }
 
     #[test]

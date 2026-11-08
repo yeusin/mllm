@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -25,18 +25,18 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to YAML configuration file
-    #[arg(short, long, default_value = "mllm.yaml")]
-    config: PathBuf,
+    /// Path to YAML configuration file [default: $HOME/.config/mllm/mllm.yaml]
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Initialize a new mllm.yaml configuration file
     Init {
-        /// Target path for configuration file
-        #[arg(short, long, default_value = "mllm.yaml")]
-        output: PathBuf,
+        /// Target path for configuration file [default: $HOME/.config/mllm/mllm.yaml]
+        #[arg(short, long)]
+        output: Option<PathBuf>,
 
         /// Overwrite configuration file if it already exists
         #[arg(short, long)]
@@ -89,7 +89,11 @@ async fn main() -> Result<()> {
     if let Some(Commands::Init { output, force }) = cli.command {
         let stdin = io::stdin();
         let mut stdout = io::stdout();
-        return run_init(&mut stdin.lock(), &mut stdout, &output, force);
+        let target_path = match output {
+            Some(p) => p,
+            None => mllm::config::default_config_path()?,
+        };
+        return run_init(&mut stdin.lock(), &mut stdout, &target_path, force);
     }
 
     if let Some(Commands::Update {
@@ -112,13 +116,20 @@ async fn main() -> Result<()> {
     }
 
     // Determine config path and its parent directory
-    let config_path = cli.config;
+    let (config_path, is_default_path) = match cli.config {
+        Some(p) => (p, false),
+        None => (mllm::config::default_config_path()?, true),
+    };
     let config_dir = config_path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    if !config_path.exists() {
+    // On first launch with default path, auto-scaffold config if it does not exist
+    if is_default_path && !config_path.exists() {
+        mllm::config::ensure_default_config_exists(&config_path)
+            .with_context(|| format!("Failed to scaffold default configuration at '{}'", config_path.display()))?;
+    } else if !config_path.exists() {
         eprintln!(
             "Notice: Configuration file '{}' not found. Run 'mllm init' to create one.",
             config_path.display()
