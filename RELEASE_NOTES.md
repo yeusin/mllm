@@ -19,7 +19,7 @@ Multi-LLM v0.4.0 upgrades Pane 0 (Center Coordinator Chat) with an in-tree rich 
 - **Visible Caret Sanitization**: Disallowed or unsafe ANSI escape sequences (OSC title spoofing, OSC 52 clipboard hijack attempts, non-SGR CSI cursor commands, and C0/C1 controls) are neutralized into human-auditable caret notation (e.g. `^[[2J`, `^[OSC...^]`) instead of executing or silently mutating.
 - **Code Span Precedence**: Inline and fenced code blocks strictly suppress `@mention` highlighting, preserving literal code representation while retaining `@mention` styling across standard markdown text, headers, lists, and quotes.
 - **Unicode & Emoji Width Alignment**: Full-width and multi-codepoint emoji support (`unicode-width` and `unicode-segmentation`) with grapheme cluster truncation (`…`) and display-width calculation parity in multiline composer wrapping.
-- **Zero External Crate Bloat**: Implemented in-tree without third-party markdown AST or ANSI crates (+0 new crates, reusing `unicode-segmentation 1.13.3` from `Cargo.lock`), adding just +49.9 KiB (+1.09%) to stripped binary size.
+- **Zero New Dependencies & Measured Binary Footprint**: Implemented in-tree without third-party markdown AST or ANSI crates (0 new external dependencies, directly declaring and reusing `unicode-segmentation 1.13.3` from `Cargo.lock`), with a measured landed binary footprint delta of +49,968 B (+49.9 KiB / +1.09%) stripped size (+48.7 KiB `.text`, +128 B `.data`).
 
 #### 2. Scalable Viewport-Windowed Rendering & Height Caching (`src/ui.rs`, `src/app.rs`)
 - **Strict $O(\text{visible})$ Scroll Scaling**: Eliminates per-frame paragraph re-wrapping by precomputing and caching message heights and total line counts on ingestion and resize.
@@ -28,6 +28,7 @@ Multi-LLM v0.4.0 upgrades Pane 0 (Center Coordinator Chat) with an in-tree rich 
 - **Empirical Benchmarks (120x40 Terminal, `fff3ab1` Release Build)**:
   - **Single-Message Render**: Mean `15.26 µs` (p50: `14.01 µs`, p95: `23.70 µs`).
   - **Adversarial Recursion Defense**: 105,000-byte unclosed delimiter line completes in `12.54 ms` (18,001 spans, bounded $O(1)$ stack depth, zero recursion).
+  - **Cold Initial Ingest**: One-time startup baseline of ~523 ms for 5,000 messages (~104.6 µs/msg) and ~984 ms for 10,000 messages (~98.4 µs/msg) to compute initial height indices; fully cached for all subsequent scroll frames.
   - **5,000 Messages Scrollback**: `1.02 ms` mean frame time (93.9% 60 FPS headroom, 37.6x speedup over uncached baseline).
   - **10,000 Messages Scrollback**: `1.01 ms` mean frame time (94.0% 60 FPS headroom, 93.8x speedup over uncached baseline, 0.00 ms growth over 5,000 messages).
 
