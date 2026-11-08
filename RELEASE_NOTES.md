@@ -2,6 +2,26 @@
 
 ---
 
+## Release v0.3.0 (November 2026)
+
+**Theme**: Deterministic Agent Working Directory  
+**Release Tag**: [`v0.3.0`](https://github.com/yeusin/mllm/releases/tag/v0.3.0)  
+**Commit**: `61fc832`
+
+Multi-LLM v0.3.0 is a focused behavioral fix release ensuring that agent client processes always launch in the directory from which `mllm` was invoked.
+
+---
+
+### Fixes
+
+#### Agents Launch in the Invocation Working Directory
+Previously, client processes were spawned without an explicit working directory, relying on inherited cwd semantics that could leave agents starting in an unpredictable default location (e.g., the home directory) instead of the project directory the operator was working in.
+
+- **Explicit PTY Working Directory**: `ClientPane::new` now accepts a `working_dir` argument and pins it on the spawned PTY command via `CommandBuilder::cwd`, making the agent's starting directory deterministic across platforms and launch contexts.
+- **Invocation Directory Resolution**: `AppState::new` resolves `mllm`'s current working directory at startup and passes it to every configured client pane, so all agents share the same working directory as the coordinator session.
+
+---
+
 ## Release v0.2.0 (November 2026)
 
 **Theme**: Autonomous Self-Update, Atomic Lazy Injection & Instruction Templating  
