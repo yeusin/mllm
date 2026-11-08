@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::num::NonZeroU16;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +30,7 @@ impl ClientPane {
         role: String,
         command: &str,
         extra_args: &[String],
+        working_dir: &Path,
         initial_cols: u16,
         initial_rows: u16,
         event_tx: UnboundedSender<()>,
@@ -67,6 +69,7 @@ impl ClientPane {
 
         let program = &parts[0];
         let mut cmd = CommandBuilder::new(program);
+        cmd.cwd(working_dir);
         for arg in &parts[1..] {
             cmd.arg(arg);
         }

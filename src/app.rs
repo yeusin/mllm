@@ -88,6 +88,9 @@ impl AppState {
         let initial_offset = std::fs::metadata(&chat_file_path).map(|m| m.len()).unwrap_or(0);
         let known_message_ids = initial_message_ids.clone();
 
+        // Spawn clients in mllm's current working directory
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
         // Initialize client panes
         let mut clients = Vec::new();
         for client_cfg in &config.clients {
@@ -97,6 +100,7 @@ impl AppState {
                 client_cfg.role.clone(),
                 &client_cfg.command,
                 &client_cfg.extra_args,
+                &working_dir,
                 80,
                 24,
                 event_tx.clone(),
@@ -1697,6 +1701,7 @@ mod tests {
                     cfg.role.clone(),
                     "cat",
                     &[],
+                    Path::new("."),
                     80,
                     24,
                     tx.clone(),
@@ -1797,7 +1802,7 @@ mod tests {
         // 2. Client Pane PageUp and PageDown
         use tokio::sync::mpsc;
         let (tx, _rx) = mpsc::unbounded_channel();
-        let pane = ClientPane::new(1, "Architect".to_string(), "Architect".to_string(), "cat", &[], 80, 24, tx).unwrap();
+        let pane = ClientPane::new(1, "Architect".to_string(), "Architect".to_string(), "cat", &[], Path::new("."), 80, 24, tx).unwrap();
         // Feed 100 lines into the client pane to build scrollback
         if let Ok(mut parser) = pane.vt_parser.lock() {
             for i in 0..100 {
