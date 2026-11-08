@@ -2,6 +2,48 @@
 
 ---
 
+## Release v0.4.0 (Unreleased)
+
+**Theme**: Full-Fidelity Rich Coordinator Chat (Markdown, ANSI Colors, Emojis) & In-Memory Session Boundaries  
+**Commit Range**: `eaed037` – `fff3ab1`
+
+Multi-LLM v0.4.0 upgrades Pane 0 (Center Coordinator Chat) with an in-tree rich terminal renderer supporting CommonMark formatting, strict ECMA-48 SGR ANSI color decoding with visible caret sanitization, and full UTF-8 emoji display width alignment. It also introduces viewport-windowed height caching and eliminates legacy terminal startup boundary markers.
+
+---
+
+### Highlights & Key Features
+
+#### 1. In-Tree Zero-Dependency Rich Terminal Renderer (`src/rich_text.rs`)
+- **Rich Text Elements**: Native rendering of headers (`#`, `##`, `###`), bold (`**bold**`), italic (`*italic*`), inline code (`` `code` ``), fenced code blocks (```lang ... ```), unordered/ordered lists (`-`, `*`, `1.`), blockquotes (`>`), and horizontal dividers (`---`).
+- **Strict ECMA-48 SGR ANSI Allowlist**: Decodes standard 16-color, 256-color (`\x1b[38;5;Nm`), and truecolor (`\x1b[38;2;R;G;Bm`) SGR sequences into Ratatui `Style` and `Color` attributes.
+- **Visible Caret Sanitization**: Disallowed or unsafe ANSI escape sequences (OSC title spoofing, OSC 52 clipboard hijack attempts, non-SGR CSI cursor commands, and C0/C1 controls) are neutralized into human-auditable caret notation (e.g. `^[[2J`, `^[OSC...^]`) instead of executing or silently mutating.
+- **Code Span Precedence**: Inline and fenced code blocks strictly suppress `@mention` highlighting, preserving literal code representation while retaining `@mention` styling across standard markdown text, headers, lists, and quotes.
+- **Unicode & Emoji Width Alignment**: Full-width and multi-codepoint emoji support (`unicode-width` and `unicode-segmentation`) with grapheme cluster truncation (`…`) and display-width calculation parity in multiline composer wrapping.
+- **Zero External Crate Bloat**: Implemented in-tree without third-party markdown AST or ANSI crates (+0 new crates, reusing `unicode-segmentation 1.13.3` from `Cargo.lock`), adding just +49.9 KiB (+1.09%) to stripped binary size.
+
+#### 2. Scalable Viewport-Windowed Rendering & Height Caching (`src/ui.rs`, `src/app.rs`)
+- **Strict $O(\text{visible})$ Scroll Scaling**: Eliminates per-frame paragraph re-wrapping by precomputing and caching message heights and total line counts on ingestion and resize.
+- **Viewport Windowing**: Materializes `Vec<Line>` solely for visible viewport message bounds `[scroll_y, scroll_end)`.
+- **Zero-Thrash Eviction**: Bounded cache (2,000 entries) safely evicts oldest entries without thrashing because off-screen messages are never re-materialized in the render loop.
+- **Empirical Benchmarks (120x40 Terminal, `fff3ab1` Release Build)**:
+  - **Single-Message Render**: Mean `15.26 µs` (p50: `14.01 µs`, p95: `23.70 µs`).
+  - **Adversarial Recursion Defense**: 105,000-byte unclosed delimiter line completes in `12.54 ms` (18,001 spans, bounded $O(1)$ stack depth, zero recursion).
+  - **5,000 Messages Scrollback**: `1.02 ms` mean frame time (93.9% 60 FPS headroom, 37.6x speedup over uncached baseline).
+  - **10,000 Messages Scrollback**: `1.01 ms` mean frame time (94.0% 60 FPS headroom, 93.8x speedup over uncached baseline, 0.00 ms growth over 5,000 messages).
+
+#### 3. In-Memory Session Boundary Tracking (`src/app.rs`, `src/chat.rs`)
+- **Zero PTY Stdin Buffer Pollution**: Deprecated legacy `BOUNDARY_MARKER` string emission to child PTY stdin.
+- **Programmatic Filtering**: Session boundary tracked exclusively via in-memory `initial_message_ids: HashSet<String>`, cleanly filtering historical records from autonomous dispatch while rendering history in the Coordinator UI.
+
+---
+
+### Verification & Quality Gates
+- **Unit & Integration Tests**: 80 passed / 0 failed (55 unit + 25 integration) including routing isolation and hostile-log startup replay sanitization.
+- **Compiler Hardening**: `#![deny(clippy::indexing_slicing)]` and `#![deny(clippy::string_slice)]` enforced across `src/rich_text.rs`.
+- **Lint Audit Attribution**: Confirmed 35 pre-existing compiler/clippy lints under Rust 1.96.0 toolchain drift (31 `collapsible_if`, 1 bool literal, 1 `div_ceil`, 1 const static lifetime, 1 clamp pattern) with zero regressions or new lint classes introduced by `eaed037` and `fff3ab1`. Scheduled for dedicated maintenance pass.
+
+---
+
 ## Release v0.3.0 (November 2026)
 
 **Theme**: Deterministic Agent Working Directory  
