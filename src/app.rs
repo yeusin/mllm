@@ -1,7 +1,6 @@
 use crate::chat::{
     append_message, build_startup_instructions_with_vars, extract_mentions,
     extract_role_instruction_target, load_messages, strip_at_mentions, ChatMessage,
-    BOUNDARY_MARKER,
 };
 use crate::config::{parse_prefix_key, AppConfig, ParsedPrefix};
 use crate::pty::ClientPane;
@@ -106,11 +105,6 @@ impl AppState {
                 event_tx.clone(),
             )?;
             clients.push(pane);
-        }
-
-        // Write session boundary marker to all client panes
-        for client in &clients {
-            let _ = client.write_raw(BOUNDARY_MARKER.as_bytes());
         }
 
         // Unified Lazy Instruction Injection:

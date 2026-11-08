@@ -216,10 +216,9 @@ Every message exchanged across users, coordinator, or autonomous agents is an at
    - Upon reaching 100 turns, autonomous dispatch pauses and emits a notification:  
      `"Chain depth limit reached (100). Pausing autonomous agent turns."`
    - Reset: Any manual submission from the human operator resets `active_chain_depth = 0`, granting a fresh 100-turn budget.
-4. **Session Startup Boundary**:
-   - Historical records are loaded on startup into `initial_message_ids`.
-   - A visual boundary marker is emitted:  
-     `=== [Active Session: Only reacting to new chat entered after this mark] ===`
+4. **In-Memory Session Startup Boundary**:
+   - Historical records are loaded on startup into `initial_message_ids` (`HashSet<String>`).
+   - Historical messages are tracked internally to exclude pre-existing log events from autonomous dispatch (`!initial_message_ids.contains(&msg.id)`), without injecting synthetic markers or polluting client PTY stdin buffers.
    - Autonomous reactions only fire on newly appended log events.
 
 ### 3.3 Atomic Lazy Instruction Injection & Context Optimization

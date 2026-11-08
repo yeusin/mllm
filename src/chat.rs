@@ -266,9 +266,6 @@ pub fn strip_at_mentions(text: &str) -> String {
     lines.join("\n").trim().to_string()
 }
 
-pub const BOUNDARY_MARKER: &str =
-    "=== [Active Session: Only reacting to new chat entered after this mark] ===\r\n";
-
 /// Replaces variable placeholders formatted as `{variable}` or `{ variable }` with corresponding values from `vars`.
 /// Unmatched curly braces (such as JSON syntax like `{"id": ...}`) are safely preserved.
 pub fn replace_instruction_placeholders(
