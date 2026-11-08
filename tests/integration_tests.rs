@@ -1277,3 +1277,135 @@ fn test_update_atomic_replacement_integrity() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+#[test]
+fn test_seeded_hostile_log_startup_render_sanitization() {
+    use mllm::app::AppState;
+    use mllm::chat::{append_message, ChatMessage};
+    use mllm::config::{AppConfig, ClientConfig};
+    use mllm::ui::render_coordinator_pane;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use ratatui::Terminal;
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_hostile_log_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let chat_path = tmp_dir.join("shared_chat.jsonl");
+
+    // Seed hostile messages containing injection vectors
+    let hostile1 = ChatMessage::new_user(
+        "Attacking: \x1b[2J\x1b[H\x1b]52;c;ZXhmaWw=\x07\x1b]0;TitlePwn\x07\x00\x07".to_string(),
+    );
+    let hostile2 = ChatMessage::new_coordinator(
+        "C1 Attack: \u{9B}31m with SGR: \x1b[32mGreen\x1b[0m and bare \x1b".to_string(),
+        Some(hostile1.id.clone()),
+    );
+    append_message(&chat_path, &hostile1).unwrap();
+    append_message(&chat_path, &hostile2).unwrap();
+
+    let config = AppConfig {
+        chat_file: "shared_chat.jsonl".to_string(),
+        prefix_key: "ctrl+b".to_string(),
+        general_instructions: "Universal protocol.".to_string(),
+        clients: vec![ClientConfig {
+            number: 1,
+            name: "Architect".to_string(),
+            role: "Lead Architect".to_string(),
+            command: "cat".to_string(),
+            instructions: "Design".to_string(),
+            extra_args: vec![],
+        }],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, &tmp_dir, tx).expect("AppState initialization should succeed");
+    assert_eq!(app.chat_history.len(), 2);
+
+    // Render into TestBackend
+    let backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            let area = Rect::new(0, 0, 120, 30);
+            render_coordinator_pane(f, &mut app, area);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
+
+    // 1. Disallowed sequences must appear in visible caret notation
+    assert!(content.contains("^[[2J"), "Expected ^[[2J in buffer content");
+    assert!(content.contains("^[[H"), "Expected ^[[H in buffer content");
+    assert!(content.contains("^[OSC:52;c;ZXhmaWw=^]"), "Expected OSC 52 caret notation in buffer");
+    assert!(content.contains("^[OSC:0;TitlePwn^]"), "Expected OSC 0 caret notation in buffer");
+    assert!(content.contains("^@"), "Expected NUL caret notation ^@ in buffer");
+    assert!(content.contains("^G"), "Expected BEL caret notation ^G in buffer");
+    assert!(content.contains("^[C1:"), "Expected C1 caret notation in buffer");
+
+    // 2. Zero raw escape bytes (\x1b) or unprintable C0 control bytes in buffer
+    for cell in buffer.content() {
+        let sym = cell.symbol();
+        assert!(!sym.contains('\x1b'), "Terminal buffer cell must not contain raw ESC byte: {:?}", sym);
+        assert!(!sym.contains('\x00'), "Terminal buffer cell must not contain raw NUL byte: {:?}", sym);
+        assert!(!sym.contains('\x07'), "Terminal buffer cell must not contain raw BEL byte: {:?}", sym);
+    }
+
+    // 3. Cache populated
+    assert_eq!(app.render_cache.len(), 2);
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_rich_markdown_routing_isolation() {
+    use mllm::app::AppState;
+    use mllm::chat::{extract_mentions, ChatMessage};
+    use mllm::config::{AppConfig, ClientConfig};
+    use tokio::sync::mpsc;
+
+    let hostile_msg_text = "```rust\n// unclosed fence with hostile ANSI \x1b[2J\n@Reviewer inside code\n";
+    let mentions = extract_mentions(hostile_msg_text);
+    // Routing extracts mentions from raw text:
+    assert_eq!(mentions, vec!["Reviewer"]);
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_routing_iso_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let config = AppConfig {
+        chat_file: "shared_chat.jsonl".to_string(),
+        prefix_key: "ctrl+b".to_string(),
+        general_instructions: String::new(),
+        clients: vec![
+            ClientConfig {
+                number: 1,
+                name: "Architect".to_string(),
+                role: "Lead Architect".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 2,
+                name: "Reviewer".to_string(),
+                role: "Reviewer".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+        ],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, &tmp_dir, tx).unwrap();
+
+    let msg = ChatMessage::new_user(hostile_msg_text.to_string());
+    let targets = app.determine_target_clients(&msg);
+    // Client index 1 is Reviewer:
+    assert_eq!(targets, vec![1]);
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+

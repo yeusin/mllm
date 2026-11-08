@@ -35,6 +35,7 @@ Welcome to the comprehensive user guide for **Multi-LLM (`mllm`)**, a high-perfo
    - [Resolving `ETXTBSY` Execution Locks](#resolving-etxtbsy-execution-locks)
    - [Checksum Verification & Security Auditing](#checksum-verification--security-auditing)
    - [Shared Log File Recovery & Dead-Letter Log](#shared-log-file-recovery--dead-letter-log)
+   - [Upgrading Existing Installations for Rich Formatting](#upgrading-existing-installations-for-rich-formatting)
 
 ---
 
@@ -206,7 +207,7 @@ general_instructions: |
      - Broadcast: Mention '@all' at the start of a line to broadcast a task to all available peer agents.
      - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose are ignored to prevent accidental routing loops.
   6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
-  7. Communication Standards: Be concise, clear, and actionable.
+  7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
   8. Mandatory Result Output: Always output results and answers by appending to {chat_file}.
 
 clients:
@@ -308,7 +309,7 @@ Multi-LLM choreographs multi-agent communication by inspecting the shared event 
 - **Auto Fallback**: If a user enters a message without any `@mention`, the Coordinator routes the message to the earliest available agent (`@Architect` by default).
 
 ### Coordinator Chat Stream & Multiline Composer
-- **Stream View**: Displays chronological events with local timestamps (`YYYY-MM-DD HH:MM:SS`), sender role tags, and unique short UUIDs (`[#e1a2]`).
+- **Stream View**: Displays chronological events with local timestamps (`YYYY-MM-DD HH:MM:SS`), sender role tags, unique short UUIDs (`[#e1a2]`), and rich terminal formatting (inline/block Markdown, fenced code blocks, ANSI colors, and UTF-8 emojis).
 - **Multiline Composer**:
   - `Enter`: Insert a newline into your message draft.
   - `Ctrl+S` (or `F5`): Dispatch message to the shared event stream.
@@ -394,3 +395,10 @@ On Unix platforms, attempting to overwrite a running binary directly triggers `E
 ### Shared Log File Recovery & Dead-Letter Log
 - If a malformed JSON line is appended to `shared_chat.jsonl` (e.g. from an experimental manual tool), Multi-LLM skips the corrupted record, logs the malformed content to `.mllm_dead_letter.jsonl`, and continues processing subsequent lines without interruption.
 - The shared log can be safely truncated or rotated when Multi-LLM is stopped.
+
+### Upgrading Existing Installations for Rich Formatting
+- Because `mllm.yaml` is local runtime configuration ignored by version control (`.gitignore`), upgrading the `mllm` binary preserves existing configuration files without overwriting them.
+- If rich formatting (Markdown, code blocks, ANSI colors, emojis) does not render in your existing sessions, update `general_instructions` item 7 in your local `mllm.yaml`:
+  ```yaml
+  7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
+  ```

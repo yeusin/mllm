@@ -38,7 +38,7 @@ Multi-LLM dynamically and symmetrically arranges arbitrary client panes around t
 1. **Center Coordinator Pane (`Pane 0`)**:
    - Strictly reserved for the **Center Coordinator** (Name: `Coordinator`, Role: `Coordinator`).
    - Occupies the center column (`Constraint::Ratio(12, 32)` or ~38% screen width, 100% height).
-   - Features the live chat stream, threading indicators, sender color palettes, status banners, and the multiline text composer.
+   - Features the live rich-text chat stream (inline/block Markdown, code blocks, ANSI colors, UTF-8 emojis), threading indicators, sender color palettes, status banners, and the multiline text composer.
 2. **Left and Right Side Columns (`Pane 1 .. Pane N`)**:
    - Active client panes are distributed evenly around the center column:
      - `mid = client_count / 2`
@@ -89,7 +89,7 @@ general_instructions: |
      - Broadcast: Mention '@all' at the start of a line to broadcast a task to all available peer agents.
      - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
   6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
-  7. Communication Standards: Be concise, clear, and actionable.
+  7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
   8. Mandatory Result Output: Always output results and answers by appending to {chat_file}. If an agent does not write its output to {chat_file}, the coordinator keeps showing the agent as in-progress.
 
 clients:

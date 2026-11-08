@@ -63,6 +63,10 @@ pub struct AppState {
     pub coordinator_buffer: Vec<Vec<String>>,
     pub clipboard: Option<Arc<Mutex<arboard::Clipboard>>>,
     pub active_tasks: HashMap<String, ActiveTask>,
+    pub render_cache: HashMap<String, (usize, Vec<ratatui::text::Line<'static>>)>,
+    pub chat_cache_width: usize,
+    pub chat_total_lines: usize,
+    pub message_heights: Vec<usize>,
 }
 
 impl AppState {
@@ -141,6 +145,10 @@ impl AppState {
             coordinator_buffer: Vec::new(),
             clipboard: arboard::Clipboard::new().ok().map(|cb| Arc::new(Mutex::new(cb))),
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
         state.reset_composer_with_default();
 
@@ -1520,6 +1528,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // Setup mock bounds: Pane 1 (left) and Pane 0 (center)
@@ -1682,6 +1694,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // Populate mock clients list in app
@@ -1777,6 +1793,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // 1. Pane 0 PageUp and PageDown
@@ -1888,6 +1908,10 @@ mod tests {
             ],
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // 1. Without active selection, Ctrl+C triggers application quit (returns true)
@@ -1956,6 +1980,10 @@ mod tests {
             ],
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // Prefix + y copies selection and resets prefix_active

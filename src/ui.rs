@@ -1,13 +1,13 @@
 use crate::app::{ActiveTask, AppState};
 use crate::chat::{format_local_timestamp, ChatMessage};
+use crate::rich_text::{display_width, render_rich_message_body, safe_truncate_id};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
-use regex::Regex;
-use std::sync::LazyLock;
+
 
 pub fn calculate_layout(area: Rect, _client_count: usize) -> (Rect, Rect, Rect, Rect) {
     let root = Layout::default()
@@ -189,65 +189,67 @@ pub fn wrap_composer_text(
             }
 
             let mut cur_line_text = String::new();
-            let mut cur_line_chars = 0;
+            let mut cur_line_width = 0;
             let mut seg_byte_offset = logical_start;
 
             for segment in segments {
-                let seg_chars = segment.chars().count();
+                let seg_width = display_width(segment);
                 let is_ws = segment.chars().all(char::is_whitespace);
 
                 // If adding a word exceeds content_width, wrap to new line
-                if !is_ws && cur_line_chars > 0 && cur_line_chars + seg_chars > content_width {
+                if !is_ws && cur_line_width > 0 && cur_line_width + seg_width > content_width {
                     let prefix = if visual_lines.is_empty() { "> " } else { "  " };
                     visual_lines.push(format!("{}{}", prefix, cur_line_text));
                     cur_line_text.clear();
-                    cur_line_chars = 0;
+                    cur_line_width = 0;
                 }
 
                 // If word is longer than content_width on its own, break word
-                if !is_ws && seg_chars > content_width {
+                if !is_ws && seg_width > content_width {
                     for ch in segment.chars() {
                         let ch_bytes = ch.len_utf8();
+                        let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
                         if cursor_pos_found.is_none() && safe_cursor_pos == seg_byte_offset {
-                            cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_chars));
+                            cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_width));
                         }
-                        if cur_line_chars >= content_width {
+                        if cur_line_width + ch_w > content_width && cur_line_width > 0 {
                             let prefix = if visual_lines.is_empty() { "> " } else { "  " };
                             visual_lines.push(format!("{}{}", prefix, cur_line_text));
                             cur_line_text.clear();
-                            cur_line_chars = 0;
+                            cur_line_width = 0;
                         }
                         cur_line_text.push(ch);
-                        cur_line_chars += 1;
+                        cur_line_width += ch_w;
                         seg_byte_offset += ch_bytes;
                     }
                     if cursor_pos_found.is_none() && safe_cursor_pos == seg_byte_offset {
-                        cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_chars));
+                        cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_width));
                     }
                     continue;
                 }
 
                 // For normal words and whitespace
-                if is_ws && cur_line_chars >= content_width {
+                if is_ws && cur_line_width >= content_width {
                     let prefix = if visual_lines.is_empty() { "> " } else { "  " };
                     visual_lines.push(format!("{}{}", prefix, cur_line_text));
                     cur_line_text.clear();
-                    cur_line_chars = 0;
+                    cur_line_width = 0;
                 }
 
                 for ch in segment.chars() {
                     let ch_bytes = ch.len_utf8();
+                    let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
                     if cursor_pos_found.is_none() && safe_cursor_pos == seg_byte_offset {
-                        cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_chars));
+                        cursor_pos_found = Some((visual_lines.len(), prefix_len + cur_line_width));
                     }
-                    if cur_line_chars >= content_width {
+                    if cur_line_width + ch_w > content_width && cur_line_width > 0 {
                         let prefix = if visual_lines.is_empty() { "> " } else { "  " };
                         visual_lines.push(format!("{}{}", prefix, cur_line_text));
                         cur_line_text.clear();
-                        cur_line_chars = 0;
+                        cur_line_width = 0;
                     }
                     cur_line_text.push(ch);
-                    cur_line_chars += 1;
+                    cur_line_width += ch_w;
                     seg_byte_offset += ch_bytes;
                 }
             }
@@ -260,20 +262,20 @@ pub fn wrap_composer_text(
         if logical_idx + 1 < total_logical {
             if cursor_pos_found.is_none() && safe_cursor_pos == current_byte {
                 let last_line_idx = visual_lines.len().saturating_sub(1);
-                let last_col = visual_lines[last_line_idx].chars().count();
+                let last_col = display_width(&visual_lines[last_line_idx]);
                 cursor_pos_found = Some((last_line_idx, last_col));
             }
             current_byte += 1; // +1 for '\n'
         } else if cursor_pos_found.is_none() && safe_cursor_pos >= current_byte {
             let last_line_idx = visual_lines.len().saturating_sub(1);
-            let last_col = visual_lines[last_line_idx].chars().count();
+            let last_col = display_width(&visual_lines[last_line_idx]);
             cursor_pos_found = Some((last_line_idx, last_col));
         }
     }
 
     let (mut c_line, mut c_col) = cursor_pos_found.unwrap_or_else(|| {
         let last_line_idx = visual_lines.len().saturating_sub(1);
-        let last_col = visual_lines[last_line_idx].chars().count();
+        let last_col = display_width(&visual_lines[last_line_idx]);
         (last_line_idx, last_col)
     });
 
@@ -324,11 +326,7 @@ pub fn format_chat_message(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let (sender_color, badge) = sender_palette(&msg.sender);
-    let short_id = if msg.id.len() >= 4 {
-        &msg.id[..4]
-    } else {
-        &msg.id
-    };
+    let short_id = safe_truncate_id(&msg.id, 4);
     let time_str = format_local_timestamp(msg.timestamp);
 
     // 1. Header Card Line with high-contrast role pill badge & card rule
@@ -387,11 +385,7 @@ pub fn format_chat_message(
 
     // 2. Thread Context Indicator
     if let Some(ref reply_id) = msg.reply_to {
-        let short_reply = if reply_id.len() >= 4 {
-            &reply_id[..4]
-        } else {
-            reply_id.as_str()
-        };
+        let short_reply = safe_truncate_id(reply_id, 4);
 
         let target_sender = chat_history
             .iter()
@@ -419,47 +413,13 @@ pub fn format_chat_message(
         lines.push(Line::from(reply_spans));
     }
 
-    // 3. Message Body with Mention Highlighting
-    for line in msg.message.lines() {
-        if line.trim().is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(format_body_line(line));
-        }
-    }
+    // 3. Message Body with Rich Formatting (Markdown, ANSI, Emojis, Mentions)
+    let body_lines = render_rich_message_body(&msg.message, available_width, sender_palette);
+    lines.extend(body_lines);
 
     lines
 }
 
-fn format_body_line(line: &str) -> Line<'static> {
-    static INLINE_MENTION_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"@([a-zA-Z0-9_\-]+)").expect("Invalid mention regex"));
-
-    let mut spans = Vec::new();
-    spans.push(Span::raw("  "));
-
-    let mut last_idx = 0;
-    for mat in INLINE_MENTION_REGEX.find_iter(line) {
-        if mat.start() > last_idx {
-            spans.push(Span::raw(line[last_idx..mat.start()].to_string()));
-        }
-        let mention_name = &mat.as_str()[1..];
-        let style = if mention_name == "all" {
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
-        } else {
-            let (target_color, _) = sender_palette(mention_name);
-            Style::default().fg(target_color).add_modifier(Modifier::BOLD)
-        };
-        spans.push(Span::styled(mat.as_str().to_string(), style));
-        last_idx = mat.end();
-    }
-
-    if last_idx < line.len() {
-        spans.push(Span::raw(line[last_idx..].to_string()));
-    }
-
-    Line::from(spans)
-}
 
 pub fn format_thinking_card(
     task: &ActiveTask,
@@ -468,11 +428,7 @@ pub fn format_thinking_card(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let (sender_color, badge) = sender_palette(&task.agent_name);
-    let short_id = if task.task_ref.len() >= 4 {
-        &task.task_ref[..4]
-    } else {
-        &task.task_ref
-    };
+    let short_id = safe_truncate_id(&task.task_ref, 4);
 
     let elapsed = task.start_time.elapsed();
     let elapsed_secs = elapsed.as_secs_f32();
@@ -620,14 +576,9 @@ pub fn render_coordinator_pane(frame: &mut Frame, state: &mut AppState, area: Re
     let composer_area = chunks[1];
 
     // Format chat messages with upgraded design: distinct role pill badges, card borders,
-    // thread reply linking, and inline mention highlighting
-    let mut text_lines = Vec::new();
+    // thread reply linking, rich markdown/ANSI/emoji formatting, parse-once cache,
+    // and viewport-windowed rendering (R4.1 / R4.3)
     let available_width = chat_area.width as usize;
-    for msg in &state.chat_history {
-        let msg_lines = format_chat_message(msg, &state.chat_history, available_width);
-        text_lines.extend(msg_lines);
-        text_lines.push(Line::from(""));
-    }
 
     // Prune exited or stale tasks
     for client in &mut state.clients {
@@ -637,26 +588,130 @@ pub fn render_coordinator_pane(frame: &mut Frame, state: &mut AppState, area: Re
     }
     state.active_tasks.retain(|_, task| task.start_time.elapsed().as_secs() < 600);
 
+    // R4.1: Parse-once per-message cache & wrapped height calculation.
+    // Recomputed ONLY when terminal width changes (resize) or new messages are appended.
+    if state.chat_cache_width != available_width || state.message_heights.len() > state.chat_history.len() {
+        state.chat_cache_width = available_width;
+        state.render_cache.clear();
+        state.message_heights.clear();
+        state.chat_total_lines = 0;
+
+        for msg in &state.chat_history {
+            let formatted = format_chat_message(msg, &state.chat_history, available_width);
+            let h = Paragraph::new(formatted.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(chat_area.width) as usize + 1; // +1 for message separator Line::from("")
+            state.message_heights.push(h);
+            state.chat_total_lines += h;
+            state.render_cache.insert(msg.id.clone(), (available_width, formatted));
+        }
+    } else if state.message_heights.len() < state.chat_history.len() {
+        let start_idx = state.message_heights.len();
+        for msg in &state.chat_history[start_idx..] {
+            let formatted = format_chat_message(msg, &state.chat_history, available_width);
+            let h = Paragraph::new(formatted.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(chat_area.width) as usize + 1;
+            state.message_heights.push(h);
+            state.chat_total_lines += h;
+            state.render_cache.insert(msg.id.clone(), (available_width, formatted));
+        }
+    }
+
     // Format active thinking cards
     let mut active_list: Vec<ActiveTask> = state.active_tasks.values().cloned().collect();
     active_list.sort_by_key(|t| t.start_time);
 
+    let mut active_card_entries: Vec<(Vec<Line<'static>>, usize)> = Vec::with_capacity(active_list.len());
+    let mut active_tasks_total = 0;
     for task in &active_list {
         let card_lines = format_thinking_card(task, &state.chat_history, available_width);
-        text_lines.extend(card_lines);
-        text_lines.push(Line::from(""));
+        let h = Paragraph::new(card_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(chat_area.width) as usize + 1;
+        active_card_entries.push((card_lines, h));
+        active_tasks_total += h;
     }
 
-    // Auto-scroll logic: calculate vertical scroll so latest message is visible,
-    // or offset upwards when user scrolls back
-    let paragraph = Paragraph::new(text_lines).wrap(Wrap { trim: false });
-    let total_lines = paragraph.line_count(chat_area.width) as u16;
-    let visible_lines = chat_area.height;
+    // Cached total lines: sum of pre-wrapped message heights + active tasks (kills per-frame full re-wrap!)
+    let total_lines = state.chat_total_lines + active_tasks_total;
+    let visible_lines = chat_area.height as usize;
     let max_scroll = total_lines.saturating_sub(visible_lines);
-    let clamped_offset = (state.chat_scroll_offset as u16).min(max_scroll);
+    let clamped_offset = state.chat_scroll_offset.min(max_scroll);
     let scroll_y = max_scroll.saturating_sub(clamped_offset);
+    let scroll_end = scroll_y + visible_lines;
 
-    let paragraph = paragraph.scroll((scroll_y, 0));
+    // Viewport-windowed rendering: materialize Vec<Line> ONLY for visible messages (R4.1 / R4.3)
+    let mut text_lines = Vec::new();
+    let mut current_y = 0;
+    let mut first_visible_y = None;
+
+    for (idx, msg) in state.chat_history.iter().enumerate() {
+        let h = state.message_heights.get(idx).copied().unwrap_or(1);
+        let next_y = current_y + h;
+        if next_y > scroll_y && current_y < scroll_end {
+            if first_visible_y.is_none() {
+                first_visible_y = Some(current_y);
+            }
+            let msg_lines = if let Some((cached_width, cached_lines)) = state.render_cache.get(&msg.id) {
+                if *cached_width == available_width {
+                    cached_lines.clone()
+                } else {
+                    let formatted = format_chat_message(msg, &state.chat_history, available_width);
+                    state.render_cache.insert(msg.id.clone(), (available_width, formatted.clone()));
+                    formatted
+                }
+            } else {
+                let formatted = format_chat_message(msg, &state.chat_history, available_width);
+                state.render_cache.insert(msg.id.clone(), (available_width, formatted.clone()));
+                formatted
+            };
+            text_lines.extend(msg_lines);
+            text_lines.push(Line::from(""));
+        }
+        current_y = next_y;
+        if current_y >= scroll_end {
+            break;
+        }
+    }
+
+    if current_y < scroll_end {
+        for (card_lines, h) in active_card_entries {
+            let next_y = current_y + h;
+            if next_y > scroll_y && current_y < scroll_end {
+                if first_visible_y.is_none() {
+                    first_visible_y = Some(current_y);
+                }
+                text_lines.extend(card_lines);
+                text_lines.push(Line::from(""));
+            }
+            current_y = next_y;
+            if current_y >= scroll_end {
+                break;
+            }
+        }
+    }
+
+    // Bounded memory cache: evict old entries if cache exceeds 2,000 entries (R4.3)
+    // Because off-screen messages are not materialized during render, eviction does not thrash!
+    if state.render_cache.len() > 2000 {
+        let recent_ids: std::collections::HashSet<&str> = state
+            .chat_history
+            .iter()
+            .rev()
+            .take(1500)
+            .map(|m| m.id.as_str())
+            .collect();
+        state.render_cache.retain(|k, _| recent_ids.contains(k.as_str()));
+    }
+
+    // Scroll offset into the visible slice
+    let first_y = first_visible_y.unwrap_or(scroll_y);
+    let viewport_scroll_y = scroll_y.saturating_sub(first_y);
+
+    let paragraph = Paragraph::new(text_lines)
+        .wrap(Wrap { trim: false })
+        .scroll((viewport_scroll_y as u16, 0));
     frame.render_widget(paragraph, chat_area);
 
     // Target responder display indicator
@@ -1132,6 +1187,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         let backend = TestBackend::new(50, 15);
@@ -1186,6 +1245,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         let backend = TestBackend::new(120, 20);
@@ -1264,6 +1327,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         // Render on a 45-column wide terminal
@@ -1404,6 +1471,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         let backend = TestBackend::new(80, 24);
@@ -1500,6 +1571,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         app.active_tasks.insert(
@@ -1589,6 +1664,10 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
         };
 
         let render = |app: &mut AppState| -> Vec<String> {
@@ -1644,5 +1723,165 @@ mod tests {
         app.tab_completion = None;
         let rows_after = render(&mut app);
         assert!(rows_after.join("\n").contains("Shift+Enter"));
+    }
+
+    #[test]
+    fn test_render_cache_width_invalidation() {
+        use crate::chat::ChatMessage;
+        use crate::config::{parse_prefix_key, AppConfig};
+        use std::collections::{HashMap, HashSet};
+        use std::path::PathBuf;
+
+        let mut app = AppState {
+            config: AppConfig {
+                chat_file: "test.jsonl".to_string(),
+                prefix_key: "ctrl+b".to_string(),
+                general_instructions: String::new(),
+                clients: vec![],
+            },
+            parsed_prefix: parse_prefix_key("ctrl+b"),
+            active_pane: 0,
+            prefix_active: false,
+            input_focused: true,
+            composer_input: String::new(),
+            cursor_pos: 0,
+            chat_history: vec![
+                ChatMessage::new_user("First long message that wraps across lines when terminal is narrow.".to_string()),
+                ChatMessage::new_user("Second message with **markdown** and `code`.".to_string()),
+            ],
+            known_message_ids: HashSet::new(),
+            initial_message_ids: HashSet::new(),
+            clients: vec![],
+            active_chain_depth: 0,
+            max_chain_depth: 100,
+            chat_file_path: PathBuf::from("test.jsonl"),
+            pty_dimensions: HashMap::new(),
+            collaborative_next_idx: 0,
+            tab_completion: None,
+            initialized_clients: HashSet::new(),
+            mouse_selection: None,
+            pane_bounds: HashMap::new(),
+            chat_scroll_offset: 0,
+            pane_scroll_offsets: HashMap::new(),
+            last_chat_offset: 0,
+            coordinator_buffer: Vec::new(),
+            clipboard: None,
+            active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
+        };
+
+        // Render at 80 cols
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 24);
+                render_coordinator_pane(f, &mut app, area);
+            })
+            .unwrap();
+
+        let initial_width = app.chat_cache_width;
+        let initial_total = app.chat_total_lines;
+        assert!(initial_width > 0);
+        assert!(initial_total > 0);
+        assert_eq!(app.message_heights.len(), 2);
+
+        // Render at 120 cols (terminal resize)
+        let backend120 = TestBackend::new(120, 24);
+        let mut terminal120 = Terminal::new(backend120).unwrap();
+        terminal120
+            .draw(|f| {
+                let area = Rect::new(0, 0, 120, 24);
+                render_coordinator_pane(f, &mut app, area);
+            })
+            .unwrap();
+
+        assert_ne!(app.chat_cache_width, initial_width);
+        assert_eq!(app.message_heights.len(), 2);
+    }
+
+    #[test]
+    fn test_scroll_zero_parse_work_and_viewport_windowing() {
+        use crate::chat::ChatMessage;
+        use crate::config::{parse_prefix_key, AppConfig};
+        use std::collections::{HashMap, HashSet};
+        use std::path::PathBuf;
+
+        let mut msgs = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            msgs.push(ChatMessage::new_user(format!("Log entry {i}: status normal with `code` and @Reviewer mention.")));
+        }
+
+        let mut app = AppState {
+            config: AppConfig {
+                chat_file: "test.jsonl".to_string(),
+                prefix_key: "ctrl+b".to_string(),
+                general_instructions: String::new(),
+                clients: vec![],
+            },
+            parsed_prefix: parse_prefix_key("ctrl+b"),
+            active_pane: 0,
+            prefix_active: false,
+            input_focused: true,
+            composer_input: String::new(),
+            cursor_pos: 0,
+            chat_history: msgs,
+            known_message_ids: HashSet::new(),
+            initial_message_ids: HashSet::new(),
+            clients: vec![],
+            active_chain_depth: 0,
+            max_chain_depth: 100,
+            chat_file_path: PathBuf::from("test.jsonl"),
+            pty_dimensions: HashMap::new(),
+            collaborative_next_idx: 0,
+            tab_completion: None,
+            initialized_clients: HashSet::new(),
+            mouse_selection: None,
+            pane_bounds: HashMap::new(),
+            chat_scroll_offset: 0,
+            pane_scroll_offsets: HashMap::new(),
+            last_chat_offset: 0,
+            coordinator_buffer: Vec::new(),
+            clipboard: None,
+            active_tasks: HashMap::new(),
+            render_cache: HashMap::new(),
+            chat_cache_width: 0,
+            chat_total_lines: 0,
+            message_heights: Vec::new(),
+        };
+
+        // First frame: populates cache and message heights
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 100, 30);
+                render_coordinator_pane(f, &mut app, area);
+            })
+            .unwrap();
+
+        let cached_total = app.chat_total_lines;
+        assert!(cached_total > 1000);
+        assert_eq!(app.message_heights.len(), 1000);
+
+        // Perform 50 consecutive scroll frames: must complete in sub-millisecond time with ZERO re-wraps
+        let start = std::time::Instant::now();
+        for offset in 1..=50 {
+            app.chat_scroll_offset = offset * 5;
+            terminal
+                .draw(|f| {
+                    let area = Rect::new(0, 0, 100, 30);
+                    render_coordinator_pane(f, &mut app, area);
+                })
+                .unwrap();
+            // Total lines remains identical (no re-wrap!)
+            assert_eq!(app.chat_total_lines, cached_total);
+        }
+        let elapsed = start.elapsed();
+        // 50 scroll frames in unoptimized debug test harness should complete smoothly (< 500ms total)
+        assert!(elapsed.as_millis() < 500, "50 scroll frames took too long: {:?}", elapsed);
     }
 }
