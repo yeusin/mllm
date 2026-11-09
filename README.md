@@ -72,6 +72,14 @@ Configuration is centralized at `$HOME/.config/mllm/mllm.yaml` (automatically sc
 # Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
 prefix_key: "alt"
 
+# Per-dispatch suffix appended to every routed task (the "[MANDATORY PROTOCOL]" block).
+# Placeholders: {chat_file} (or {chatfile}), {id} (task ref), {client_name}, {client_role}.
+# This field is the sole source of the protocol text — there is no built-in default;
+# removing it (or setting it empty) disables the suffix. {id}/{client_name}/{client_role}
+# are JSON-escaped on substitution; {chat_file} is inserted raw (prose position).
+# Seed-text source of truth: SEED_MANDATORY_PROTOCOL in src/config.rs.
+mandatory_protocol: '[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {chat_file} with "reply_to": "{id}", "sender": "{client_name}", "role": "{client_role}". Terminal output alone is ignored by the coordinator.'
+
 # General instructions shared across all LLM clients
 general_instructions: |
   Shared Log Coordination & Output Protocol:
@@ -153,6 +161,7 @@ clients:
 ### 2.2 Configuration Fields
 - `prefix_key` *(string, default: `"alt"`)*: Prefix combination (`"alt"` or `"alt+<key>"`).
 - `general_instructions` *(string)*: Protocol instructions injected into each client's prompt context.
+- `mandatory_protocol` *(string, no default)*: Per-dispatch `[MANDATORY PROTOCOL]` suffix appended to every routed task (§3.6). **Absent or empty disables the suffix** — configs from before v0.5.2 must add the field to keep the reply instruction (upgrade note in the v0.5.2 release notes). Placeholders: `{chat_file}` (alias `{chatfile}`), `{id}`, `{client_name}`, `{client_role}`; the last three are JSON-escaped on substitution, `{chat_file}` is inserted raw. Multi-line values are safe (dispatch uses bracketed paste). Seed text: `SEED_MANDATORY_PROTOCOL` in `src/config.rs`, mirrored in `mllm.yaml.example`.
 - `clients` *(array)*:
   - `number` *(usize, 1..9)*: Unique pane number (`0` is reserved for Coordinator; duplicates auto-reassign).
   - `name` *(string)*: Identifier for `@mention` routing (case-insensitive).
@@ -262,6 +271,8 @@ Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy In
 ### 3.6 Mandatory Reply Logging & Watchdog
 
 Every dispatched task ends with a `[MANDATORY PROTOCOL]` suffix with pre-filled `reply_to`, `sender`, `role` and chat file path. A turn is complete only when a reply line with a matching `reply_to` and `sender` is appended to the shared log; terminal output alone is ignored.
+
+The suffix text comes from `mandatory_protocol` in `mllm.yaml` (placeholders: `{chat_file}` — alias `{chatfile}` — `{id}`, `{client_name}`, `{client_role}`; see §2.2). There is no built-in default: if the field is absent or empty, no suffix is appended, so configs from before v0.5.2 must add the field to keep the reply instruction (upgrade note in the v0.5.2 release notes).
 
 If a client goes idle without logging, the coordinator escalates (idle means no screen change and no log growth):
 
@@ -379,9 +390,10 @@ The Multi-LLM test suite enforces complete verification across all subsystems:
 cargo test
 ```
 
-### Verified Test Suite (100 Tests Passing)
-- **Unit Tests (`src/lib.rs` - 64 tests)**:
+### Verified Test Suite (103 Tests Passing)
+- **Unit Tests (67 tests)**:
   - `app::tests::test_mouse_selection_clamping_to_pane`
+  - `app::tests::test_mandatory_protocol_suffix_substitution` (byte-exact seeded-text render, JSON-escape cases)
   - `app::tests::test_base64_encode_and_screen_text_extraction`
   - `app::tests::test_pageup_pagedown_scrollback`
   - `app::tests::test_cycle_responder_tab`
@@ -390,6 +402,7 @@ cargo test
   - `chat::tests::test_chat_message_roundtrip`
   - `chat::tests::test_extract_mentions` & `test_strip_at_mentions`
   - `config::tests::test_parse_prefix_key` & `test_config_collision_reassignment`
+  - `config::tests::test_mandatory_protocol_absent_means_disabled` & `test_mandatory_protocol_custom_template`
   - `ui::tests::test_calculate_layout` & `test_sender_palette_coverage`
   - `ui::tests::test_render_coordinator_multiline_composer`
   - `update::tests::test_detect_target_triple`

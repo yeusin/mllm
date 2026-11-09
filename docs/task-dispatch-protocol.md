@@ -24,6 +24,8 @@ Task from {sender} ({role}): {content} [Ref: {id}]
 
 The suffix comes last (recency) and pre-fills `reply_to`, file path, sender and role. Once `mllm-reply` exists, the suffix should name it as the preferred command.
 
+The suffix text is config-driven: the `mandatory_protocol` field in `mllm.yaml` holds the template. `{id}`, `{client_name}` and `{client_role}` are JSON-escaped on substitution; `{chat_file}` is inserted raw (prose position — a custom template that embeds it inside a JSON string must escape backslashes itself, e.g. Windows paths). There is no built-in default: an absent or empty field disables the suffix. The `\n\n` separator stays code-owned; multi-line templates are safe because dispatch is atomic via bracketed paste. `{{…}}` brace pairs survive partially substituted — the same contract as instruction interpolation.
+
 ## 3. Log Entry Schema
 
 One JSON object per line, UTF-8, newline-terminated.

@@ -2,6 +2,29 @@
 
 ---
 
+## Release v0.5.2 (November 2026)
+
+**Release Tag**: [`v0.5.2`](https://github.com/yeusin/mllm/releases/tag/v0.5.2)  
+**Theme**: Configurable Mandatory Protocol Suffix (No Built-In Default)
+
+> [!WARNING]
+> **Upgrade note (breaking)**: the `[MANDATORY PROTOCOL]` suffix no longer has a built-in default. Existing `mllm.yaml` configs **without a `mandatory_protocol` field stop instructing agents to log replies** after upgrading — the coordinator and watchdog still run, but no suffix is dispatched. Add the field to your config (seed text in `mllm.yaml.example` or §2.1 of the README) to restore it.
+
+The per-dispatch `[MANDATORY PROTOCOL]` suffix — the instruction that makes agents append replies to the shared chat log — was previously hardcoded. It is now a first-class configuration field, editable per deployment, with placeholder interpolation, JSON-safe substitution, and the same extension contract as instruction templates. Full specification: [`docs/task-dispatch-protocol.md`](docs/task-dispatch-protocol.md).
+
+### Features
+- **`mandatory_protocol` config field**: top-level field in `mllm.yaml` holding the suffix template. Placeholders: `{chat_file}` (alias `{chatfile}`), `{id}`, `{client_name}`, `{client_role}`. Unknown `{placeholders}` are left untouched, and `{{…}}` brace pairs survive partially substituted — matching instruction interpolation.
+- **JSON-safe injection**: `{id}`, `{client_name}` and `{client_role}` are JSON-escaped on substitution, so names or roles containing quotes, backslashes or newlines render valid JSON in the suffix. `{chat_file}` is inserted raw (prose position).
+- **Multi-line templates**: safe to author — dispatch is atomic via bracketed paste, and the `\n\n` separator between task text and suffix stays code-owned.
+- **Single source of truth**: the seed text is defined once (`SEED_MANDATORY_PROTOCOL` in `src/config.rs`), shipped in `mllm.yaml.example`, and included in scaffolded configs.
+
+### Known limitations
+- Absent, empty, whitespace-only, or `null` `mandatory_protocol` all disable the suffix (deliberate no-built-in-default semantics — see the upgrade note above).
+- A custom template that embeds `{chat_file}` inside a JSON string must escape backslashes itself (relevant for Windows paths); `{id}`/`{client_name}`/`{client_role}` need no manual escaping.
+- Verification: 103 tests pass (67 unit, 32 integration, 4 audit regression), including byte-exact seeded-suffix rendering, absent-disables, custom-template, and JSON-escape coverage. Implementation and documentation audited by the Reviewer.
+
+---
+
 ## Release v0.5.1 (November 2026)
 
 **Release Tag**: [`v0.5.1`](https://github.com/yeusin/mllm/releases/tag/v0.5.1)  
