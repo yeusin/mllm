@@ -40,7 +40,7 @@ pub struct ClientConfig {
 /// This is NOT a runtime default — the runtime has no built-in protocol; the user's
 /// `mllm.yaml` is the sole source. Placeholders: `{chat_file}` (alias `{chatfile}`),
 /// `{id}` (task ref), `{client_name}`, `{client_role}`.
-pub const SEED_MANDATORY_PROTOCOL: &str = "[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {chat_file} with \"reply_to\": \"{id}\", \"sender\": \"{client_name}\", \"role\": \"{client_role}\". Terminal output alone is ignored by the coordinator.";
+pub const SEED_MANDATORY_PROTOCOL: &str = "[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {chat_file} with \"reply_to\": \"{id}\", \"sender\": \"{client_name}\", \"role\": \"{client_role}\". Output must be strictly a single line (escape newlines as \\n). Do not begin lines with @Peer unless delegating work. Terminal output alone is ignored by the coordinator.";
 
 fn default_prefix() -> String {
     "alt".to_string()
@@ -265,18 +265,18 @@ pub fn default_init_config() -> AppConfig {
         general_instructions: r#"Shared Log Coordination & Output Protocol:
 1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
 2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
-   {"id": "<uuid>", "reply_to": "<question_uuid_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
-3. Unique UUID & Question Linking: Generate a unique UUID for "id" and reference the question's UUID with "reply_to".
-4. Unix Timestamp: The "timestamp" field must be an integer Unix timestamp in epoch seconds.
-5. Directing Tasks & Mention Format:
-   - Header Mentions: Place target mentions at the start of a line or message (e.g. '@Reviewer @Researcher: <task>' or '@User @Reviewer: <update>').
-   - Multiple Targets: Multiple leading mentions on the same line are supported. Mentioning '@User' addresses the human operator without blocking peer dispatch.
-   - Directive Bullet Points: Directives formatted as markdown list items (e.g. '- To @Reviewer: <task>' or '- @Reviewer: <task>') are automatically extracted and routed.
-   - Broadcast: Mention '@all' at the start of a line to broadcast a task to all available peer agents.
-   - Mid-Sentence Mentions: Mentions embedded in casual mid-sentence prose (e.g. 'coordinated with @Reviewer') are ignored to prevent accidental routing loops.
-6. Mention Routing: The Center Coordinator monitors the shared log and automatically delivers @all or @mentioned tasks to target agents.
-7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
-8. Mandatory Result Output: Always output results and answers by appending to {chat_file}. If an agent does not write its output to {chat_file}, the coordinator keeps showing the agent as in-progress.
+   {"id": "<uuid>", "reply_to": "<task_ref_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
+3. Turn Ref Linking: Always set "reply_to" to the exact task reference specified in the [MANDATORY PROTOCOL] suffix (or null if initiating an unsolicited message). The coordinator watchdog verifies this exact task_ref to mark turns complete.
+4. Single-Line JSON & Escaping: The output MUST be a single physical line. All internal newlines in "message" must be escaped as '\n' and quotes as '\"'. Never emit raw unescaped multiline JSON.
+5. Directing Tasks & Mention Rules:
+   - Dispatch Mentions (Active): Place '@Peer:' at line start or use directive list items ('- To @Peer: <task>') ONLY when delegating work requiring that peer to execute and reply. Never begin ANY line — including within blockquotes ('>'), bullet lists ('-', '*'), numbered items ('1.'), or inside fenced code blocks ('```') — with @Peer unless assigning active work.
+   - Multi-Target Mentions: Placing '@User @Peer:' on a single line still dispatches to the peer. Use multiple mentions only when simultaneous peer execution is required.
+   - Informational References (Passive): When citing a peer in status reports, code reviews, or summaries, keep mentions mid-sentence (e.g. '@User: Coordinated with @Reviewer...') to prevent accidental dispatch loops.
+   - Silent Lane Closure (Anti-Ping-Pong): When your work is finished and no peer reply is needed, address @User directly without leading peer mentions. NEVER begin a line with '@Peer: No reply needed' or '@Peer: Acknowledged', as leading mentions unconditionally dispatch a turn. Never use '@all' in acknowledgments or lane closures.
+   - Broadcast: Mention '@all' at line start only when all peer agents must actively execute.
+6. Orchestration & Lead Synthesis: The agent tasked by @User acts as Lead Orchestrator. Delegated peers reply to the Lead's task ref [Ref: id]. Once peer deliverables are complete, the Lead synthesizes findings and delivers the final response to @User with no leading peer mentions.
+7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported.
+8. Mandatory Result Output: Always append results to {chat_file} by emitting the entire JSON line in a single write (e.g. single printf or heredoc; use mllm-reply once available). If unlogged, the coordinator watchdog will nudge and scrape your terminal.
 "#.to_string(),
         clients: vec![
             ClientConfig {
@@ -286,8 +286,10 @@ pub fn default_init_config() -> AppConfig {
                 command: "agy".to_string(),
                 instructions: r#"Lead system architecture, technical specifications, runtime decisions, and interface contracts.
 Evaluate system language choices, concurrency patterns, and framework tradeoffs.
+Orchestrate multi-agent workflows and synthesize final findings for @User.
 Direct security, edge cases, and audit concerns to @Reviewer in the shared log.
 Direct ecosystem, crate, and benchmark investigations to @Researcher in the shared log.
+Direct architecture specifications, API documentation requirements, and release notes drafting to @TechnicalWriter in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },
@@ -300,6 +302,7 @@ Direct ecosystem, crate, and benchmark investigations to @Researcher in the shar
 Audit reliability, error handling, memory safety, and maintenance overhead.
 Direct architectural redesign questions to @Architect in the shared log.
 Direct benchmark verification requests to @Researcher in the shared log.
+Direct documentation accuracy reviews, missing edge-case coverage, and verification corrections to @TechnicalWriter in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },
@@ -312,6 +315,7 @@ Direct benchmark verification requests to @Researcher in the shared log.
 Analyze cross-platform tooling, crate/package benchmarks, and developer velocity tradeoffs.
 Direct architectural implications to @Architect in the shared log.
 Direct compliance and security findings to @Reviewer in the shared log.
+Direct benchmark summaries, performance analysis reports, and research documentation to @TechnicalWriter in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },
@@ -333,8 +337,9 @@ Direct accuracy and implementation verification queries to @Reviewer in the shar
                 role: "Brand & UI/UX Designer".to_string(),
                 command: "agy".to_string(),
                 instructions: r#"Create design system components, wireframes, user journeys, and visual layouts.
-Direct documentation layout and copy alignment requests to @TechnicalWriter.
-Direct campaign asset specifications to @Marketer.
+Direct documentation layout and copy alignment requests to @TechnicalWriter in the shared log.
+Direct campaign asset specifications to @Marketer in the shared log.
+Direct design deliverables and user experience reviews to @User in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },
@@ -344,8 +349,9 @@ Direct campaign asset specifications to @Marketer.
                 role: "Growth & Campaign Specialist".to_string(),
                 command: "agy".to_string(),
                 instructions: r#"Evaluate user acquisition channels, audience segmentation, conversion funnels, and KPIs.
-Direct technical content and messaging adjustments to @TechnicalWriter.
-Direct banner, landing page, and visual requirements to @Designer.
+Direct technical content and messaging adjustments to @TechnicalWriter in the shared log.
+Direct banner, landing page, and visual requirements to @Designer in the shared log.
+Direct campaign strategies and performance updates to @User in the shared log.
 "#.to_string(),
                 extra_args: Vec::new(),
             },

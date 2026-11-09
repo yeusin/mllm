@@ -1743,7 +1743,7 @@ mod tests {
         );
         assert_eq!(
             suffix,
-            "\n\n[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to /home/u/.config/mllm/history/1_2/chat.jsonl with \"reply_to\": \"ref-9\", \"sender\": \"Reviewer\", \"role\": \"Reviewer & Auditor\". Terminal output alone is ignored by the coordinator."
+            "\n\n[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to /home/u/.config/mllm/history/1_2/chat.jsonl with \"reply_to\": \"ref-9\", \"sender\": \"Reviewer\", \"role\": \"Reviewer & Auditor\". Output must be strictly a single line (escape newlines as \\n). Do not begin lines with @Peer unless delegating work. Terminal output alone is ignored by the coordinator."
         );
     }
 
