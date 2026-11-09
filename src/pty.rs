@@ -98,6 +98,7 @@ impl ClientPane {
         let parser_clone = Arc::clone(&vt_parser);
         let event_tx_clone = event_tx.clone();
         let last_activity_clone = Arc::clone(&last_activity_ms);
+        let writer_clone = Arc::clone(&writer);
         std::thread::Builder::new()
             .name(format!("pty-reader-{}", number))
             .spawn(move || {
@@ -109,6 +110,19 @@ impl ClientPane {
                         Ok(n) => {
                             if let Ok(mut parser) = parser_clone.lock() {
                                 parser.process(&buf[..n]);
+                                // Answer terminal capability queries so full-screen
+                                // TUIs (e.g. OpenCode/OpenTUI) don't stall on
+                                // unresponded probes or fall back to degraded
+                                // rendering. Responses are best-effort.
+                                let responses = build_query_responses(&parser, &buf[..n]);
+                                if !responses.is_empty() {
+                                    if let Ok(mut w) = writer_clone.lock() {
+                                        for resp in responses {
+                                            let _ = w.write_all(resp.as_bytes());
+                                        }
+                                        let _ = w.flush();
+                                    }
+                                }
                                 use std::hash::{DefaultHasher, Hash, Hasher};
                                 let mut hasher = DefaultHasher::new();
                                 parser.screen().contents().hash(&mut hasher);
@@ -256,5 +270,155 @@ impl ClientPane {
 
     pub fn terminate(&mut self) {
         let _ = self.child.kill();
+    }
+}
+
+/// Build terminal responses for standard capability queries found in a raw
+/// PTY output chunk. Full-screen TUIs (e.g. OpenCode/OpenTUI) probe the
+/// terminal on startup and render degraded or stall if probes go unanswered.
+///
+/// Supported probes:
+/// - `CSI 6n` (device status report / cursor position) → answered with the
+///   current cursor position from the vt100 parser (1-based row;col).
+/// - `OSC 10;?` (foreground color query) → answered with a light gray fg.
+/// - `OSC 11;?` (background color query) → answered with a black bg,
+///   matching the dark theme assumed by the host terminal.
+/// - `DCS +q Pt;Pt` (XTGETTCAP) → answered with an empty (unsupported)
+///   capability response, so clients fall back to safe behavior.
+///
+/// Kitty keyboard queries (`CSI ? u`), iTerm2 `OSC 1337`, and OSC 66/7501
+/// are deliberately NOT answered: the correct way to decline optional
+/// protocols is silence, after which clients use legacy fallbacks.
+///
+/// Note: a query split across two read chunks will be missed; queries are
+/// effectively always contiguous in practice since clients emit them whole.
+fn build_query_responses(parser: &Parser, chunk: &[u8]) -> Vec<String> {
+    let mut responses = Vec::new();
+
+    if find_all(chunk, b"\x1b[6n") > 0 {
+        let (row, col) = parser.screen().cursor_position();
+        responses.push(format!("\x1b[{};{}R", row + 1, col + 1));
+    }
+
+    if find_all(chunk, b"\x1b]10;?") > 0 {
+        responses.push("\x1b]10;rgb:c7c7/c7c7/c7c7\x1b\\".to_string());
+    }
+    if find_all(chunk, b"\x1b]11;?") > 0 {
+        responses.push("\x1b]11;rgb:0000/0000/0000\x1b\\".to_string());
+    }
+
+    if find_all(chunk, b"\x1bP+q") > 0 {
+        // XTGETTCAP: empty response reports "capability not supported".
+        responses.push("\x1bP+r\x1b\\".to_string());
+    }
+
+    responses
+}
+
+fn find_all(haystack: &[u8], needle: &[u8]) -> usize {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return 0;
+    }
+    haystack
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_parser() -> Parser {
+        Parser::new(NonZeroU16::new(24).unwrap(), NonZeroU16::new(80).unwrap(), 1000)
+    }
+
+    #[test]
+    fn test_query_responses_answer_startup_probes() {
+        let parser = dummy_parser();
+        // Mirrors the probes emitted by OpenCode/OpenTUI at startup.
+        let chunk = b"\x1b[6n\x1b]10;?\x07\x1b]11;?\x07\x1bP+q4d73\x1b\\";
+        let responses = build_query_responses(&parser, chunk);
+
+        assert_eq!(responses.len(), 4);
+        assert_eq!(responses[0], "\x1b[1;1R"); // cursor position (1-based)
+        assert_eq!(responses[1], "\x1b]10;rgb:c7c7/c7c7/c7c7\x1b\\"); // fg
+        assert_eq!(responses[2], "\x1b]11;rgb:0000/0000/0000\x1b\\"); // bg
+        assert_eq!(responses[3], "\x1bP+r\x1b\\"); // XTGETTCAP: unsupported
+    }
+
+    #[test]
+    fn test_query_responses_silent_on_optional_protocols() {
+        let parser = dummy_parser();
+        // Kitty keyboard query, iTerm2 capabilities, OSC 66/7501: no reply.
+        // The OSC 66 sample mirrors the real OpenTUI probe draw (`w=2`).
+        // Detection itself is a CPR trick: OpenTUI compares CSI 6n replies
+        // before/after the draw; since vt100 ignores OSC 66 the cursor never
+        // advances, and our identical 6n answers correctly read as
+        // "unsupported" -> OpenTUI falls back to single-width rendering.
+        let chunk = b"\x1b[?u\x1b]1337;Capabilities\x1b\\\x1b]7501;?\x1b\\\x1b]66;w=2; \x1b\\";
+        assert!(build_query_responses(&parser, chunk).is_empty());
+    }
+
+    #[test]
+    fn test_query_responses_ignores_plain_output() {
+        let parser = dummy_parser();
+        assert!(build_query_responses(&parser, b"hello world\r\n").is_empty());
+    }
+
+    /// Regression: vendored vt100 patch handles CSI s / CSI u (SCOSC/SCORC).
+    /// Upstream 0.18.1 silently ignores them; OpenCode/OpenTUI uses them
+    /// around redraws, so ignoring caused draws to land on wrong rows
+    /// (panes "moving lines up and overwriting"). See vendor/vt100.
+    #[test]
+    fn test_vt100_patch_cursor_save_restore() {
+        let mut parser = dummy_parser();
+        parser.process(b"\x1b[2;3HAB\x1b[s");
+        assert_eq!(parser.screen().cursor_position(), (1, 4));
+        parser.process(b"\x1b[5;5HXY");
+        assert_eq!(parser.screen().cursor_position(), (4, 6));
+        parser.process(b"\x1b[u");
+        // Cursor must be restored to the saved position, not left at (4,7).
+        assert_eq!(parser.screen().cursor_position(), (1, 4));
+        parser.process(b"CD");
+        assert_eq!(parser.screen().cell(1, 4).unwrap().contents(), "C");
+        assert_eq!(parser.screen().cell(1, 5).unwrap().contents(), "D");
+    }
+
+    /// Regression: vendored vt100 patch handles ESC D (IND) / ESC E (NEL).
+    #[test]
+    fn test_vt100_patch_ind_nel() {
+        let mut parser = dummy_parser();
+        parser.process(b"\x1b[3;5H");
+        parser.process(b"\x1bD"); // IND: down one row, col unchanged
+        assert_eq!(parser.screen().cursor_position(), (3, 4));
+        parser.process(b"\x1bE"); // NEL: down one row, col 0
+        assert_eq!(parser.screen().cursor_position(), (4, 0));
+    }
+
+    /// ESC D (IND) at the bottom of the screen must scroll (push the top row
+    /// into scrollback), matching real-terminal lf behavior.
+    #[test]
+    fn test_vt100_patch_ind_scrolls_at_bottom() {
+        let mut parser = dummy_parser();
+        let rows = parser.screen().size().0.get();
+        parser.process(b"\x1b[1;1HTOP-MARKER\r\n");
+        parser.process(format!("\x1b[{rows};1HBOTTOM-MARKER").into_bytes().as_slice());
+        assert_eq!(parser.screen().scrollback_len(), 0);
+        parser.process(b"\x1bD"); // IND at bottom row -> scroll
+        assert_eq!(parser.screen().scrollback_len(), 1);
+        // TOP-MARKER scrolled off the visible screen: row 0 is now blank,
+        // BOTTOM-MARKER moved up one row.
+        assert_eq!(parser.screen().cell(0, 0).unwrap().contents(), "");
+        assert_eq!(
+            parser.screen().cell(rows - 2, 0).unwrap().contents(),
+            "B"
+        );
+        assert_eq!(
+            parser.screen().cell(rows - 2, 12).unwrap().contents(),
+            "R"
+        );
+        // Cursor stays on the bottom row, column preserved.
+        assert_eq!(parser.screen().cursor_position(), (rows - 1, 13));
     }
 }

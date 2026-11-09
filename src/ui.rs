@@ -951,6 +951,15 @@ impl<'a> Widget for PtyTerminalWidget<'a> {
         for row in 0..max_r {
             for col in 0..max_c {
                 if let Some(cell) = self.screen.cell(row, col) {
+                    // Skip wide-continuation cells: a wide glyph (emoji, CJK,
+                    // icons) occupies two grid columns but must be emitted
+                    // once. Ratatui's diff-based backend only redraws changed
+                    // cells, so leaving the continuation cell untouched lets
+                    // the terminal keep both halves of the glyph instead of
+                    // overwriting the right half with a blank cell.
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
                     let contents = cell.contents();
                     let fg = convert_vt_color(cell.fgcolor());
                     let bg = convert_vt_color(cell.bgcolor());
@@ -1910,5 +1919,215 @@ mod tests {
         let elapsed = start.elapsed();
         // 50 scroll frames in unoptimized debug test harness should complete smoothly (< 500ms total)
         assert!(elapsed.as_millis() < 500, "50 scroll frames took too long: {:?}", elapsed);
+    }
+
+    #[test]
+    fn test_pty_widget_wide_char_leaves_continuation_cell_untouched() {
+        let mut parser = vt100::Parser::new(
+            std::num::NonZeroU16::new(5).unwrap(),
+            std::num::NonZeroU16::new(10).unwrap(),
+            100,
+        );
+        // Wide glyph followed by a narrow char that must land on column 2.
+        parser.process("🤖X\n".as_bytes());
+
+        let screen = parser.screen();
+        assert!(screen.cell(0, 0).unwrap().is_wide());
+        assert!(screen.cell(0, 1).unwrap().is_wide_continuation());
+
+        let area = Rect::new(0, 0, 10, 5);
+        let mut buf = Buffer::empty(area);
+        PtyTerminalWidget {
+            screen,
+            rows: 5,
+            cols: 10,
+            selection: None,
+        }
+        .render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].symbol(), "🤖");
+        // Continuation cell must remain untouched (blank) so the terminal
+        // keeps the right half of the wide glyph instead of overwriting it.
+        assert_eq!(buf[(1, 0)].symbol(), " ");
+        assert_eq!(buf[(2, 0)].symbol(), "X");
+    }
+
+    /// Opt-in replay of a raw PTY capture through the real render path.
+    /// Run with: REPLAY_CAPTURE=/path/to/raw.bin cargo test replay -- --nocapture
+    #[test]
+    fn test_replay_capture_through_widget() {
+        let path = std::env::var("REPLAY_CAPTURE").unwrap_or_default();
+        if path.is_empty() {
+            return;
+        }
+        let raw = std::fs::read(&path).expect("capture file");
+        let cols: u16 = std::env::var("REPLAY_COLS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+        let rows: u16 = std::env::var("REPLAY_ROWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let mut parser = vt100::Parser::new(
+            std::num::NonZeroU16::new(rows).unwrap(),
+            std::num::NonZeroU16::new(cols).unwrap(),
+            1000,
+        );
+        parser.process(&raw);
+
+        let area = Rect::new(0, 0, cols, rows);
+        let backend = TestBackend::new(cols, rows);
+        let mut terminal = Terminal::new(backend).unwrap();
+        {
+            let screen = parser.screen();
+            terminal
+                .draw(|f| {
+                    f.render_widget(
+                        PtyTerminalWidget {
+                            screen,
+                            rows,
+                            cols,
+                            selection: None,
+                        },
+                        area,
+                    );
+                })
+                .unwrap();
+        }
+        println!("=== rendered buffer ({cols}x{rows}) ===");
+        let buffer = terminal.backend().buffer();
+        for row in 0..rows {
+            let mut line = String::new();
+            for col in 0..cols {
+                line.push_str(buffer[(col, row)].symbol());
+            }
+            println!("{:02}|{}|", row, line);
+        }
+        // Column-accuracy audit: no row may contain a wide glyph immediately
+        // followed by a non-blank cell at col+1 (that would be the terminal
+        // overwriting the continuation half).
+        let mut artifacts = 0;
+        for row in 0..rows {
+            for col in 0..cols.saturating_sub(1) {
+                let sym = buffer[(col, row)].symbol();
+                let next = buffer[(col + 1, row)].symbol();
+                let wide = sym
+                    .chars()
+                    .next()
+                    .map_or(0, |c: char| unicode_width::UnicodeWidthChar::width(c).unwrap_or(1))
+                    > 1;
+                if wide && next != " " {
+                    artifacts += 1;
+                    println!("ARTIFACT row {} col {} sym {:?} next {:?}", row, col, sym, next);
+                }
+            }
+        }
+        println!("=== wide-glyph artifacts: {} ===", artifacts);
+    }
+
+    /// Opt-in multi-frame replay: splits a raw PTY capture at OpenTUI's
+    /// synchronized-frame boundaries (?2026l), feeds each frame through a
+    /// persistent parser + widget, and emits the host-side byte stream the
+    /// same way ratatui's CrosstermBackend does (per-cell MoveTo with its
+    /// last_pos cursor tracking). Output can be rendered by a wide-char-aware
+    /// reference emulator to expose host-terminal artifacts.
+    /// Run with: REPLAY_MULTIFRAME=/path/to/raw.bin cargo test multiframe -- --nocapture
+    #[test]
+    fn test_replay_multiframe_host_emit() {
+        use std::io::Write as _;
+        let path = std::env::var("REPLAY_MULTIFRAME").unwrap_or_default();
+        if path.is_empty() {
+            return;
+        }
+        let out_path =
+            std::env::var("REPLAY_OUT").unwrap_or_else(|_| "/tmp/opencode/mllm_host.bin".into());
+        let raw = std::fs::read(&path).expect("capture file");
+        let cols: u16 = std::env::var("REPLAY_COLS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(117);
+        let rows: u16 = std::env::var("REPLAY_ROWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(49);
+
+        // Split at synchronized-frame end markers (?2026l), keeping the
+        // marker bytes in the preceding segment.
+        let marker: &[u8] = b"\x1b[?2026l";
+        let mut frames: Vec<&[u8]> = Vec::new();
+        let mut start = 0usize;
+        while let Some(pos) = raw[start..].windows(marker.len()).position(|w| w == marker) {
+            let end = start + pos + marker.len();
+            frames.push(&raw[start..end]);
+            start = end;
+        }
+        if start < raw.len() {
+            frames.push(&raw[start..]);
+        }
+        println!("frames: {}", frames.len());
+
+        let mut parser = vt100::Parser::new(
+            std::num::NonZeroU16::new(rows).unwrap(),
+            std::num::NonZeroU16::new(cols).unwrap(),
+            1000,
+        );
+        let area = Rect::new(0, 0, cols, rows);
+        let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+        let mut host_out = std::io::BufWriter::new(std::fs::File::create(&out_path).unwrap());
+        // Emulate ratatui CrosstermBackend::draw cursor tracking.
+        let mut last_pos: Option<(u16, u16)> = None;
+        let mut prev_snap: Option<ratatui::buffer::Buffer> = None;
+
+        for frame in frames.iter() {
+            parser.process(frame);
+            {
+                let screen = parser.screen();
+                terminal
+                    .draw(|f| {
+                        f.render_widget(
+                            PtyTerminalWidget {
+                                screen,
+                                rows,
+                                cols,
+                                selection: None,
+                            },
+                            area,
+                        );
+                    })
+                    .unwrap();
+            }
+            // Diff current buffer vs previous snapshot, emitting bytes the
+            // way CrosstermBackend::draw does for changed cells.
+            let buffer = terminal.backend().buffer().clone();
+            let emit_all = prev_snap.is_none();
+            if let Some(prev_buf) = prev_snap.as_ref() {
+                for y in 0..rows {
+                    for x in 0..cols {
+                        if buffer[(x, y)] != prev_buf[(x, y)] {
+                            if last_pos != Some((x, y)) {
+                                write!(host_out, "\x1b[{};{}H", y + 1, x + 1).unwrap();
+                            }
+                            write!(host_out, "{}", buffer[(x, y)].symbol()).unwrap();
+                            last_pos = Some((x + 1, y));
+                        }
+                    }
+                }
+            }
+            if emit_all {
+                for y in 0..rows {
+                    for x in 0..cols {
+                        if last_pos != Some((x, y)) {
+                            write!(host_out, "\x1b[{};{}H", y + 1, x + 1).unwrap();
+                        }
+                        write!(host_out, "{}", buffer[(x, y)].symbol()).unwrap();
+                        last_pos = Some((x + 1, y));
+                    }
+                }
+            }
+            prev_snap = Some(buffer);
+        }
+        host_out.flush().unwrap();
+        println!("wrote host stream to {out_path}");
     }
 }

@@ -24,6 +24,14 @@ unicode-width = "0.2"
 uuid = { version = "1.29.1", features = ["v4", "v5", "serde"] }
 vt100 = "0.18.1"
 
+# Vendored vt100 0.18.1 with a minimal patch (see vendor/vt100/src/perform.rs):
+# - CSI s / CSI u (SCOSC/SCORC cursor save/restore) — previously silently
+#   ignored, causing OpenCode/OpenTUI panes to draw on wrong rows
+# - ESC D (IND) / ESC E (NEL) line advance — previously silently ignored
+[patch.crates-io]
+vt100 = { path = "vendor/vt100" }
+
 [[bench]]
+
 name = "bench_scaling"
 harness = false
