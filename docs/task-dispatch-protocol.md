@@ -1,7 +1,7 @@
 # Task Dispatch & Chat Logging Protocol v1.3
 
 > **Status:** Final (v1.3). v1.3 adds the nudge-echo settle window (§1, §4), strict standalone prompt matching on the early path (§5), character-boundary truncation (§5) and current-ref-scoped task clearing (§7). Architect-approved; Reviewer audit findings R1-R9 are mandatory requirements. v1.1 added the dual-path prompt-match rule (§5) and cursor note (§4); v1.2 pair-scopes the §5 abort check and cap, defines `superseded_by` delivery, and adds sender normalization and §6 caveats.
-> Not yet implemented. Describes target behavior for the coordinator (`src/app.rs`, `src/pty.rs`, `src/chat.rs`).
+> Implemented in v0.5.0 (commit `2241124`). Describes the coordinator behavior in `src/app.rs`, `src/pty.rs`, `src/chat.rs`.
 > The key words MUST, MUST NOT and MAY are used in their RFC 2119 sense.
 
 ## 1. Definitions
