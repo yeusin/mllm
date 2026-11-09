@@ -57,7 +57,7 @@ clients:
   - number: 4
     name: TechnicalWriter
     role: Technical Writer
-    command: agy --dangerously-skip-permissions
+    command: agy --model claude-sonnet-5.5-medium --dangerously-skip-permissions
     instructions: |
       Author and maintain technical documentation, specifications, user guides, API docs, and release notes.
       Ensure clarity, accuracy, completeness, and structured formatting across all project documentation.
@@ -76,7 +76,7 @@ clients:
   - number: 6
     name: Marketer
     role: Growth & Campaign Specialist
-    command: agy --dangerously-skip-permissions
+    command: agy --model claude-sonnet-5.5-medium --dangerously-skip-permissions
     instructions: |
       Evaluate user acquisition channels, audience segmentation, conversion funnels, and KPIs.
       Direct technical content and messaging adjustments to @TechnicalWriter.
