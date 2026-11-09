@@ -29,14 +29,13 @@ fn create_app_with_clients(client_names: Vec<(&str, &str)>) -> (AppState, std::p
         .collect();
 
     let config = AppConfig {
-        chat_file: "test.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: String::new(),
         clients,
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let app = AppState::new(config, &tmp, tx).expect("AppState::new");
+    let app = AppState::new(config, Some(&tmp), tx).expect("AppState::new");
     (app, tmp)
 }
 

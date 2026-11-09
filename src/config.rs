@@ -3,13 +3,10 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    #[serde(default = "default_chat_file")]
-    pub chat_file: String,
     #[serde(default = "default_prefix")]
     pub prefix_key: String,
     #[serde(default)]
@@ -29,10 +26,6 @@ pub struct ClientConfig {
     pub instructions: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
-}
-
-fn default_chat_file() -> String {
-    "$HOME/.config/mllm/history/{working_dir_inode}/chat.jsonl".to_string()
 }
 
 fn default_prefix() -> String {
@@ -77,10 +70,6 @@ pub fn get_working_dir_dev_ino() -> Result<(u64, u64)> {
     }
 }
 
-pub fn get_working_dir_inode() -> Result<u64> {
-    get_working_dir_dev_ino().map(|(_dev, ino)| ino)
-}
-
 pub fn default_chat_log_dir() -> Result<PathBuf> {
     let (dev, ino) = get_working_dir_dev_ino()?;
     let conf_dir = default_config_dir()?;
@@ -103,29 +92,6 @@ pub fn ensure_default_config_exists(config_path: &Path) -> Result<bool> {
             use std::os::unix::fs::PermissionsExt;
             let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
-    }
-
-    // Auto-migration: if legacy local ./mllm.yaml exists in cwd, copy it to the centralized path
-    let legacy_path = Path::new("mllm.yaml");
-    if legacy_path.exists() && legacy_path.is_file() {
-        fs::copy(legacy_path, config_path).with_context(|| {
-            format!(
-                "Failed to migrate legacy configuration from '{}' to '{}'",
-                legacy_path.display(),
-                config_path.display()
-            )
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(config_path, fs::Permissions::from_mode(0o600));
-        }
-        eprintln!(
-            "Notice: Migrated legacy configuration from '{}' to '{}'.",
-            legacy_path.display(),
-            config_path.display()
-        );
-        return Ok(true);
     }
 
     let default_config = default_init_config();
@@ -166,7 +132,6 @@ pub fn ensure_chat_log_exists(chat_path: &Path) -> Result<()> {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            chat_file: default_chat_file(),
             prefix_key: default_prefix(),
             general_instructions: String::new(),
             clients: Vec::new(),
@@ -175,74 +140,18 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn resolve_chat_file_path(&self, config_dir: &Path) -> Result<PathBuf> {
-        let trimmed = self.chat_file.trim();
-        if trimmed.is_empty() || trimmed == "default" {
-            return default_chat_log_path();
-        }
-
-        let mut path_str = trimmed.to_string();
-
-        // Perform token replacement within template
-        if path_str.contains("{dev}_{ino}")
-            || path_str.contains("{working_dir_inode}")
-            || path_str.contains("{dev}")
-            || path_str.contains("{ino}")
-        {
-            let (dev, ino) = get_working_dir_dev_ino()?;
-            let dev_ino_str = format!("{}_{}", dev, ino);
-            path_str = path_str.replace("{dev}_{ino}", &dev_ino_str);
-            path_str = path_str.replace("{working_dir_inode}", &dev_ino_str);
-            path_str = path_str.replace("{dev}", &dev.to_string());
-            path_str = path_str.replace("{ino}", &ino.to_string());
-        }
-
-        let expanded = if let Some(stripped) = path_str.strip_prefix("$HOME/") {
-            if let Ok(home) = std::env::var("HOME") {
-                PathBuf::from(home).join(stripped)
-            } else {
-                default_chat_log_path()?
-            }
-        } else if let Some(stripped) = path_str.strip_prefix("~/") {
-            if let Ok(home) = std::env::var("HOME") {
-                PathBuf::from(home).join(stripped)
-            } else {
-                default_chat_log_path()?
-            }
-        } else {
-            let p = Path::new(&path_str);
-            if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                config_dir.join(p)
-            }
-        };
-
-        Ok(expanded)
-    }
-
     /// Builds the standard variable interpolation map for client instruction templates.
     pub fn instruction_vars_for(&self, client: &ClientConfig) -> HashMap<String, String> {
         let mut vars = HashMap::new();
-        let chat_str = if let Ok(p) = self.resolve_chat_file_path(Path::new(".")) {
-            p.display().to_string()
-        } else if let Ok(p) = default_chat_log_path() {
-            p.display().to_string()
-        } else {
-            self.chat_file.clone()
-        };
-        vars.insert("chat_file".to_string(), chat_str.clone());
-        vars.insert("chatfile".to_string(), chat_str);
+        let chat_str = default_chat_log_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        vars.insert("chat_file".to_string(), chat_str);
         vars.insert("prefix_key".to_string(), self.prefix_key.clone());
-        vars.insert("prefixkey".to_string(), self.prefix_key.clone());
         vars.insert("name".to_string(), client.name.clone());
-        vars.insert("client_name".to_string(), client.name.clone());
         vars.insert("role".to_string(), client.role.clone());
-        vars.insert("client_role".to_string(), client.role.clone());
         vars.insert("command".to_string(), client.command.clone());
-        vars.insert("client_command".to_string(), client.command.clone());
         vars.insert("number".to_string(), client.number.to_string());
-        vars.insert("client_number".to_string(), client.number.to_string());
         vars
     }
 }
@@ -293,24 +202,8 @@ pub fn parse_prefix_key(raw: &str) -> Result<ParsedPrefix> {
         });
     }
 
-    // Normalize forms like "ctrl+b", "ctrl-b", "c-b"
-    if let Some(rest) = lower
-        .strip_prefix("ctrl+")
-        .or_else(|| lower.strip_prefix("ctrl-"))
-        .or_else(|| lower.strip_prefix("c-"))
-    {
-        let key_char = rest
-            .chars()
-            .next()
-            .ok_or_else(|| anyhow!("Missing key character after ctrl prefix in '{}'", raw))?;
-        return Ok(ParsedPrefix {
-            modifiers: KeyModifiers::CONTROL,
-            code: KeyCode::Char(key_char),
-        });
-    }
-
     bail!(
-        "Invalid prefix_key configuration '{}'. Expected 'alt', 'alt+<key>', or 'ctrl+<key>'.",
+        "Invalid prefix_key configuration '{}'. Expected 'alt' or 'alt+<key>'.",
         raw
     )
 }
@@ -348,34 +241,8 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
     Ok(config)
 }
 
-/// Supported LLM clients for role assignment
-pub const AVAILABLE_CLIENTS: &[&str] = &["claude", "codex", "opencode", "agy"];
-
-pub fn normalize_client_choice(input: &str, default: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Some(default.to_string());
-    }
-    match trimmed {
-        "1" => Some("claude".to_string()),
-        "2" => Some("codex".to_string()),
-        "3" => Some("opencode".to_string()),
-        "4" => Some("agy".to_string()),
-        other => {
-            let lower = other.to_lowercase();
-            for &client in AVAILABLE_CLIENTS {
-                if lower == client || lower.starts_with(&format!("{} ", client)) {
-                    return Some(other.to_string());
-                }
-            }
-            None
-        }
-    }
-}
-
 pub fn default_init_config() -> AppConfig {
     AppConfig {
-        chat_file: default_chat_file(),
         prefix_key: default_prefix(),
         general_instructions: r#"Shared Log Coordination & Output Protocol:
 1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
@@ -468,198 +335,16 @@ Direct banner, landing page, and visual requirements to @Designer.
     }
 }
 
-pub fn prompt_client_choice<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    role_name: &str,
-    role_desc: &str,
-    default_client: &str,
-) -> Result<String> {
-    writeln!(writer, "\nAssign LLM client for role '{}' ({}):", role_name, role_desc)?;
-    for (i, client) in AVAILABLE_CLIENTS.iter().enumerate() {
-        writeln!(writer, "  {}) {}", i + 1, client)?;
-    }
-    loop {
-        write!(writer, "Select client [1-4 or name] (default: {}): ", default_client)?;
-        writer.flush()?;
-
-        let mut line = String::new();
-        let bytes_read = reader.read_line(&mut line)?;
-        if bytes_read == 0 {
-            // EOF reached, use default
-            return Ok(default_client.to_string());
-        }
-
-        if let Some(chosen) = normalize_client_choice(&line, default_client) {
-            return Ok(chosen);
-        }
-
-        writeln!(
-            writer,
-            "Invalid choice '{}'. Please select 1-4, claude, codex, opencode, or agy.",
-            line.trim()
-        )?;
-    }
-}
-
-pub fn run_init<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    output_path: &Path,
-    force: bool,
-) -> Result<()> {
-    if output_path.exists() && !force {
-        writeln!(
-            writer,
-            "Configuration file '{}' already exists in the project. Skipping creation (use --force to overwrite).",
-            output_path.display()
-        )?;
-        return Ok(());
-    }
-
-    let example_path = output_path
-        .parent()
-        .map(|p| p.join("mllm.yaml.example"))
-        .filter(|p| p.exists())
-        .or_else(|| {
-            let p = PathBuf::from("mllm.yaml.example");
-            if p.exists() {
-                Some(p)
-            } else {
-                None
-            }
-        });
-
-    let mut config = if let Some(ref path) = example_path {
-        load_config(path).unwrap_or_else(|_| default_init_config())
-    } else {
-        default_init_config()
-    };
-
-    writeln!(
-        writer,
-        "Initializing Multi-LLM configuration for '{}'...",
-        output_path.display()
-    )?;
-
-    for client in &mut config.clients {
-        let current_default = AVAILABLE_CLIENTS
-            .iter()
-            .find(|c| client.command.to_lowercase().starts_with(*c))
-            .copied()
-            .unwrap_or("agy");
-
-        let selected = prompt_client_choice(
-            reader,
-            writer,
-            &client.name,
-            &client.role,
-            current_default,
-        )?;
-        client.command = selected;
-    }
-
-    let yaml_str = serde_yaml::to_string(&config)
-        .with_context(|| "Failed to serialize configuration to YAML")?;
-
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
-        }
-    }
-
-    fs::write(output_path, yaml_str)
-        .with_context(|| format!("Failed to write configuration file to '{}'", output_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(output_path, fs::Permissions::from_mode(0o600));
-    }
-
-    writeln!(
-        writer,
-        "\nSuccessfully created '{}' with assigned LLM clients.",
-        output_path.display()
-    )?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_client_choice() {
-        assert_eq!(normalize_client_choice("1", "agy").unwrap(), "claude");
-        assert_eq!(normalize_client_choice("2", "agy").unwrap(), "codex");
-        assert_eq!(normalize_client_choice("3", "agy").unwrap(), "opencode");
-        assert_eq!(normalize_client_choice("4", "agy").unwrap(), "agy");
-        assert_eq!(normalize_client_choice("claude", "agy").unwrap(), "claude");
-        assert_eq!(normalize_client_choice("Codex", "agy").unwrap(), "Codex");
-        assert_eq!(normalize_client_choice("OPENCODE", "agy").unwrap(), "OPENCODE");
-        assert_eq!(normalize_client_choice("agy", "claude").unwrap(), "agy");
-        assert_eq!(normalize_client_choice("", "opencode").unwrap(), "opencode");
-        assert_eq!(normalize_client_choice("   ", "agy").unwrap(), "agy");
-        assert_eq!(normalize_client_choice("claude --dangerously-skip-permissions", "agy").unwrap(), "claude --dangerously-skip-permissions");
-        assert!(normalize_client_choice("unsupported_client", "agy").is_none());
-    }
-
-    #[test]
-    fn test_run_init_workflow() {
-        let tmp_dir = std::env::temp_dir().join(format!("test_init_{}", std::process::id()));
-        let _ = fs::create_dir_all(&tmp_dir);
-        let out_yaml = tmp_dir.join("mllm.yaml");
-
-        // Simulate user assigning:
-        // 1: claude
-        // 2: codex
-        // 3: opencode
-        // 4: agy
-        // 5: claude
-        // 6: default (empty string)
-        let mut input = "1\n2\n3\n4\nclaude\n\n".as_bytes();
-        let mut output = Vec::new();
-
-        run_init(&mut input, &mut output, &out_yaml, false).expect("run_init failed");
-        assert!(out_yaml.exists());
-
-        let cfg = load_config(&out_yaml).expect("load_config on generated file failed");
-        assert_eq!(cfg.clients.len(), 6);
-        assert_eq!(cfg.clients[0].command, "claude");
-        assert_eq!(cfg.clients[1].command, "codex");
-        assert_eq!(cfg.clients[2].command, "opencode");
-        assert_eq!(cfg.clients[3].command, "agy");
-        assert_eq!(cfg.clients[4].command, "claude");
-
-        // Verify skipping when already exists and force is false
-        let mut skip_output = Vec::new();
-        let mut empty_input = "".as_bytes();
-        run_init(&mut empty_input, &mut skip_output, &out_yaml, false).expect("skip check failed");
-        let skip_msg = String::from_utf8_lossy(&skip_output);
-        assert!(skip_msg.contains("already exists in the project. Skipping creation"));
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&tmp_dir);
-    }
-
-    #[test]
     fn test_parse_prefix_key() {
-        let p1 = parse_prefix_key("ctrl+b").unwrap();
-        assert!(p1.matches(KeyCode::Char('b'), KeyModifiers::CONTROL));
-
-        let p2 = parse_prefix_key("Ctrl+B").unwrap();
-        assert!(p2.matches(KeyCode::Char('b'), KeyModifiers::CONTROL));
-
-        let p3 = parse_prefix_key("C-a").unwrap();
-        assert!(p3.matches(KeyCode::Char('a'), KeyModifiers::CONTROL));
-
-        let p4 = parse_prefix_key("ctrl-x").unwrap();
-        assert!(p4.matches(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert!(parse_prefix_key("ctrl+b").is_err());
+        assert!(parse_prefix_key("Ctrl+B").is_err());
+        assert!(parse_prefix_key("C-a").is_err());
+        assert!(parse_prefix_key("ctrl-x").is_err());
 
         let p_alt = parse_prefix_key("alt").unwrap();
         assert_eq!(p_alt.code, KeyCode::Null);
@@ -749,33 +434,11 @@ mod tests {
     }
 
     #[test]
-    fn test_chat_file_token_replacement_and_spaces_in_path() {
+    fn test_instruction_vars_fixed_chat_file() {
         let (dev, ino) = get_working_dir_dev_ino().unwrap();
         let dev_ino = format!("{}_{}", dev, ino);
 
-        let config = AppConfig {
-            chat_file: "/custom workspace directory with spaces/{dev}_{ino}/sub/log.jsonl".to_string(),
-            ..AppConfig::default()
-        };
-
-        let resolved = config.resolve_chat_file_path(Path::new(".")).unwrap();
-        assert_eq!(
-            resolved,
-            PathBuf::from(format!("/custom workspace directory with spaces/{}/sub/log.jsonl", dev_ino))
-        );
-
-        // Test {working_dir_inode} alias expansion
-        let config_alias = AppConfig {
-            chat_file: "/var/log/mllm/{working_dir_inode}/chat.jsonl".to_string(),
-            ..AppConfig::default()
-        };
-        let resolved_alias = config_alias.resolve_chat_file_path(Path::new(".")).unwrap();
-        assert_eq!(
-            resolved_alias,
-            PathBuf::from(format!("/var/log/mllm/{}/chat.jsonl", dev_ino))
-        );
-
-        // Test instruction_vars_for receives resolved string
+        let config = AppConfig::default();
         let client = ClientConfig {
             number: 1,
             name: "TestClient".to_string(),
@@ -786,16 +449,14 @@ mod tests {
         };
         let vars = config.instruction_vars_for(&client);
         let chat_var = vars.get("chat_file").unwrap();
-        assert!(!chat_var.contains("{dev}_{ino}"));
-        assert!(!chat_var.contains("{working_dir_inode}"));
         assert!(chat_var.contains(&dev_ino));
+        assert!(chat_var.ends_with("chat.jsonl"));
     }
 
     #[test]
     fn test_config_collision_reassignment() {
         let yaml = r#"
-chat_file: "test_chat.jsonl"
-prefix_key: "ctrl+b"
+prefix_key: "alt"
 clients:
   - number: 0
     name: "ClientZero"

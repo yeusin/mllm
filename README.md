@@ -27,7 +27,7 @@ Multi-LLM is a Rust-based terminal multiplexer and multi-agent orchestration TUI
 │  Pane 3: Researcher      │  [Composer: @Architect ]  │                           │
 │  [Role: Researcher]      │  [Tab: Cycle Responder]   │                           │
 ├──────────────────────────┴───────────────────────────┴───────────────────────────┤
-│ [mllm] 0:Coordinator*  1:Architect  2:Reviewer  3:Researcher [Depth: 0/100] [Alt]│
+│ 0:Coordinator* 1:Architect 2:Reviewer 3:Researcher [Prefix: ALT] [COLLABORATE]   │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -53,25 +53,18 @@ Multi-LLM dynamically and symmetrically arranges arbitrary client panes around t
    - $N = 6$: Left [Pane 1, Pane 2, Pane 3], Center [Pane 0: Coordinator], Right [Pane 4, Pane 5, Pane 6].
 4. **Status Bar**:
    - Classic tmux-style status line docked at the bottom (`Constraint::Length(1)`).
-   - Displays session name, numbered pane tabs with active indicators (`0:Coordinator*`), chain depth budget (`[Depth: 0/100]`), and armed prefix indicator (`[PREFIX]` highlighted when armed).
+   - Displays session name, numbered pane tabs with active indicators (`0:Coordinator*`), the prefix indicator (`[PREFIX]` highlighted when armed, otherwise `[Prefix: ALT]`), and the mode badge (`[COLLABORATE]` on the Coordinator pane, `[DIRECT]` on client panes).
 
 ---
 
 ## 2. Configuration Specification (`$HOME/.config/mllm/mllm.yaml`)
 
-Configuration is centralized at `$HOME/.config/mllm/mllm.yaml` (automatically scaffolded on first launch if not present), or overridden via `--config <path>` (`-c <path>`).
-
-To initialize or customize configuration interactively by assigning available LLM clients (`claude`, `codex`, `opencode`, `agy`) to each role:
-```bash
-mllm init
-```
-If `$HOME/.config/mllm/mllm.yaml` already exists, `init` skips creation unless `-f` / `--force` is provided. Alternatively, an example template is available at `mllm.yaml.example`.
+Configuration is centralized at `$HOME/.config/mllm/mllm.yaml` (automatically scaffolded on first launch if not present), or overridden via `--config <path>` (`-c <path>`). Alternatively, an example template is available at `mllm.yaml.example`.
 
 ### 2.1 YAML Schema & Multi-Agent Example
 
 ```yaml
 # Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
-chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"
 prefix_key: "alt"
 
 # General instructions shared across all LLM clients
@@ -153,8 +146,7 @@ clients:
 ```
 
 ### 2.2 Configuration Fields
-- `chat_file` *(string, default: `"$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"`)*: Path to the shared JSONL coordination log, isolated per working directory filesystem device and inode (`{dev}_{ino}`, with `{working_dir_inode}` supported as a compatibility alias).
-- `prefix_key` *(string, default: `"alt"`)*: Prefix combination (`"alt"`, `"alt+<key>"`, or legacy `"ctrl+<key>"` / `"c-<key>"`).
+- `prefix_key` *(string, default: `"alt"`)*: Prefix combination (`"alt"` or `"alt+<key>"`).
 - `general_instructions` *(string)*: Protocol instructions injected into each client's prompt context.
 - `clients` *(array)*:
   - `number` *(usize, 1..9)*: Unique pane number (`0` is reserved for Coordinator; duplicates auto-reassign).
@@ -167,14 +159,14 @@ clients:
 #### Dynamic Instruction Template Variables
 Both `general_instructions` and client `instructions` support dynamic placeholder interpolation at runtime. This avoids hardcoding paths, role names, or shortcuts across configuration sections:
 
-| Variable | Aliases | Description |
-| :--- | :--- | :--- |
-| `{chat_file}` | `{chatfile}` | Interpolates the resolved absolute shared event log path (e.g., `/home/user/.config/mllm/history/123456/chat.jsonl`). |
-| `{prefix_key}` | `{prefixkey}` | Interpolates the configured prefix key (e.g., `alt`). |
-| `{name}` | `{client_name}` | Interpolates the specific client agent identifier (e.g., `Architect`). |
-| `{role}` | `{client_role}` | Interpolates the agent's assigned role description (e.g., `Lead Architect`). |
-| `{command}` | `{client_command}` | Interpolates the executable binary name (e.g., `agy`). |
-| `{number}` | `{client_number}` | Interpolates the client pane index number (e.g., `1`). |
+| Variable | Description |
+| :--- | :--- |
+| `{chat_file}` | Interpolates the resolved absolute shared event log path (e.g., `/home/user/.config/mllm/history/64512_4070304/chat.jsonl`). |
+| `{prefix_key}` | Interpolates the configured prefix key (e.g., `alt`). |
+| `{name}` | Interpolates the specific client agent identifier (e.g., `Architect`). |
+| `{role}` | Interpolates the agent's assigned role description (e.g., `Lead Architect`). |
+| `{command}` | Interpolates the executable binary name (e.g., `agy`). |
+| `{number}` | Interpolates the client pane index number (e.g., `1`). |
 
 > [!NOTE]
 > Placeholder matching supports internal spacing (e.g. `{ chat_file }`) and safely preserves unmatched curly braces and raw JSON schemas (such as `{"id": "<uuid>"}`).
@@ -221,7 +213,26 @@ Every message exchanged across users, coordinator, or autonomous agents is an at
    - Historical messages are tracked internally to exclude pre-existing log events from autonomous dispatch (`!initial_message_ids.contains(&msg.id)`), without injecting synthetic markers or polluting client PTY stdin buffers.
    - Autonomous reactions only fire on newly appended log events.
 
-### 3.3 Atomic Lazy Instruction Injection & Context Optimization
+### 3.3 Mention Syntax Examples
+```text
+@Architect: Please design the database schema.
+@Reviewer @Researcher: Please evaluate the proposed cryptographic scheme.
+- To @Reviewer: Verify the error handling in lib.rs.
+- @TechnicalWriter: Update the README with new CLI flags.
+@all: Release v0.2.0 is live. Stand by for team status updates.
+```
+Mentions embedded in prose (e.g. `we met with @Architect earlier`) are ignored. A user message without any `@mention` is routed to the earliest available agent (`@Architect` by default).
+
+### 3.4 Coordinator Chat Stream & Multiline Composer
+- **Stream View**: Chronological events with local timestamps (`YYYY-MM-DD HH:MM:SS`), sender role tags, short UUIDs (`[#e1a2]`), and rich terminal formatting.
+- **Composer**:
+  - `Enter`: Send the message to the shared event stream.
+  - `Shift+Enter`, `Alt+Enter`, `Ctrl+Enter`, or `Ctrl+j`: Insert a newline.
+  - `Tab`: Auto-complete `@agent` mentions or cycle the active target responder.
+  - `Esc`: Unfocus the composer.
+- **Thinking Cards**: When a task is dispatched to an agent, an animated card appears in the Coordinator status banner with a spinner and elapsed time (`⠋ THINKING (14.2s)`). The card clears when the agent posts its reply to the chat log.
+
+### 3.5 Atomic Lazy Instruction Injection & Context Optimization
 Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy Instruction Injection**:
 
 1. **Zero Event-Log Pollution**: Startup instructions are never written as synthetic rows into `shared_chat.jsonl`. The shared chat stream contains exclusively genuine human-operator and autonomous peer communications.
@@ -284,21 +295,26 @@ Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy In
 | `<prefix>` then `1`–`9` | Global | **Focus Client Pane** | Switches focus directly to Client Pane 1 through 9. |
 | `<prefix>` then `o` / `n` | Global | **Next Pane** | Cycles focus to next pane numerically. |
 | `<prefix>` then `p` | Global | **Previous Pane** | Cycles focus to previous pane numerically. |
+| `<prefix>` then `y` | Global | **Copy Selection** | Copies active text selection to system clipboard. |
 | `<prefix>` then `Escape` | Global | **Cancel Prefix** | Disarms prefix mode. |
 | `Alt+0`–`Alt+9` | Global | **Instant Jump** | Switches instantly to Pane 0–9 from anywhere (even while typing). |
 | `Tab` | Composer | **Cycle Responder** | Cycles leading mention responder (`@Architect` $\rightarrow$ `@Reviewer` $\rightarrow$ `@Researcher` $\rightarrow$ `@all`). |
 | `Shift+Tab` | Composer | **Reverse Responder** | Cycles leading mention responder in reverse order. |
-| `Tab` / `Shift+Tab` | Navigation | **Cycle Panes** | Cycles focus forward / backward across active panes. |
+| `Tab` / `Shift+Tab` | Navigation | **Cycle Panes** | Cycles focus forward / backward across active panes when composer is unfocused. |
 | `PageUp` | Coordinator | **Scroll Chat Up** | Scrolls Center Coordinator message history up by 10 lines. |
 | `PageDown` | Coordinator | **Scroll Chat Down** | Scrolls Center Coordinator message history down by 10 lines. |
 | `PageUp` / `PageDown` | Client Pane | **Scroll PTY Buffer** | Scrolls focused client PTY terminal history up / down. |
 | `0`–`9` | Navigation | **Direct Jump** | Direct pane switch when input is unfocused. |
 | `Escape` | Input | **Unfocus / Reset** | Unfocuses composer, clears active mouse selection, and resets scrollback. |
-| `Ctrl+c` / `Ctrl+q` | Global | **Clean Exit** | Terminates all child PTYs and cleanly restores terminal state. |
+| `Ctrl+c` | Global | **Conditional Copy** | Copies highlighted text when an active mouse selection exists (instead of quitting). |
+| `Ctrl+c` / `Ctrl+q` | Global | **Clean Exit** | Terminates all child PTYs and cleanly restores terminal state (when no selection is active). |
 
 ### 5.2 Mouse Controls & Clipboard Export
 - **Pane-Isolated Selection**: Left-click and drag inside any pane selects terminal text. Selection boundaries are strictly clamped to the active pane's inner rectangle, preventing text bleed across adjacent columns.
 - **Automatic Clipboard Export (OSC 52)**: On mouse release (`MouseEventKind::Up`), selected text is automatically copied to the system clipboard via standard OSC 52 ANSI escape sequences (`\x1b]52;c;<base64>\x07`).
+- **Click to Focus**: Left-clicking anywhere inside a pane activates and focuses it.
+- **Clipboard**: Copying writes the system clipboard natively via the `arboard` crate and additionally emits OSC 52 for terminal-level clipboard support.
+- **Manual Copy**: Press `Ctrl+c` (with an active selection), `<prefix>` then `y`, or right-click to copy highlighted text.
 - **Mouse Wheel Scrollback**: Scrolling the mouse wheel up or down over any pane smoothly scrolls that pane's history buffer by 3 lines per notch.
 
 ---
@@ -322,7 +338,8 @@ Multi-LLM includes comprehensive architectural safeguards to guarantee high-thro
 - Incomplete trailing buffers remain uncommitted until the terminating newline is flushed on the next tick, preventing corrupted JSON parse errors.
 
 ### 6.4 Dead-Letter Log Queue
-- Malformed JSON records ending in newlines are quarantined to `shared_chat.dead_letter.jsonl`.
+- Malformed JSON records ending in newlines are quarantined to a sibling file of the chat log with a `.dead_letter.jsonl` extension (e.g. `chat.dead_letter.jsonl`), and processing continues with subsequent lines.
+- The shared log can be safely truncated or rotated while Multi-LLM is stopped.
 - Ensures that corrupt records do not stall the log stream or panic the coordinator.
 
 ### 6.5 Terminal RAII Teardown (`TerminalGuard`)
@@ -343,8 +360,8 @@ The Multi-LLM test suite enforces complete verification across all subsystems:
 cargo test
 ```
 
-### Verified Test Suite (67 Tests Passing)
-- **Unit Tests (`src/lib.rs` - 44 tests)**:
+### Verified Test Suite (83 Tests Passing)
+- **Unit Tests (`src/lib.rs` - 55 tests)**:
   - `app::tests::test_mouse_selection_clamping_to_pane`
   - `app::tests::test_base64_encode_and_screen_text_extraction`
   - `app::tests::test_pageup_pagedown_scrollback`
@@ -367,7 +384,7 @@ cargo test
   - `update::tests::test_checksum_verification_fail_paths`
   - `update::tests::test_extracted_payload_validation_fail_paths`
   - `update::tests::test_broken_symlink_target_handling`
-- **Integration Tests (`tests/integration_tests.rs` - 23 tests)**:
+- **Integration Tests (`tests/integration_tests.rs` - 28 tests)**:
   - `test_chat_message_json_protocol`
   - `test_config_loading_and_defaults`
   - `test_app_init_stops_and_errors_on_invalid_command`
@@ -475,7 +492,10 @@ Unlike traditional Rust update mechanisms that embed heavy crates (`self_update`
 - **Hardened Multi-User Staging**: Unpacks archives within a private temporary directory restricted to `0700` permissions (`DirBuilderExt::mode(0o700)`) to mitigate multi-user `/tmp` snooping or tampering.
 - **Payload & Archive Hardening**: Ensures extracted binary is a regular file (`is_file()`, rejecting symlinks and directories) and extracts archives using `--no-same-owner --no-same-permissions` to eliminate privilege escalation hazards under `sudo`.
 - **Atomic In-Place Replacement & Fsync Durability**: Stages the binary into `.mllm-update-<uuid>.tmp` within the same target directory, applies `0755` permissions, flushes disk buffers via `sync_all()` (`fsync`) to prevent power-loss truncation, and executes an atomic POSIX `rename(2)` to overwrite the target executable cleanly without `ETXTBSY` lockouts.
-- **Semantic Versioning & Intentional Downgrades**: Rejects invalid version strings or directory targets early. Downgrading to an older version (e.g. rollback to `v0.1.0`) is supported as an intentional resiliency feature: `mllm update` prints an explicit warning notice and proceeds unblocked.
+- **Semantic Versioning & Intentional Downgrades**: Rejects invalid version strings or directory targets early. Downgrading to an older version (e.g. rollback to `v0.1.0`) is supported as an intentional resiliency feature: `mllm update` prints an explicit warning notice and proceeds unblocked:
+  ```text
+  Notice: Target version v0.1.0 is older than current version v0.2.0 (downgrade).
+  ```
 
 #### Trust Model & Supply-Chain Attestation (v0.2.1+)
 - **Transport Integrity vs Compromise**: Built-in SHA-256 checksum verification guards against network transmission errors and corrupted downloads. Checksums are hosted alongside release archives and do not guard against upstream repository or release-pipeline compromise. Release v0.2.0 and earlier do not contain embedded cryptographic signatures.
@@ -489,7 +509,7 @@ Unlike traditional Rust update mechanisms that embed heavy crates (`self_update`
     ```
   - **Zero-Bloat Footprint Boundary**: Delegating attestation verification out-of-band to `gh` preserves `mllm`'s 0-dependency runtime footprint (<17 KB `.text`, <5 MB RSS) without embedding heavy Sigstore or OpenSSL dependencies.
 
-For in-depth operational instructions, refer to the [User Guide](docs/USER_GUIDE.md) and [Release Notes](RELEASE_NOTES.md).
+For release history, see the [Release Notes](RELEASE_NOTES.md).
 
 ### Prerequisites (for building from source)
 - **Rust Toolchain**: 1.85+ (Edition 2024 support)
@@ -504,15 +524,24 @@ cd mllm
 # Build optimized binary
 cargo build --release
 
-# Initialize configuration interactively (assign claude, codex, opencode, or agy to each role)
-./target/release/mllm init
-
-# Run with centralized configuration ($HOME/.config/mllm/mllm.yaml)
+# Run with centralized configuration (auto-scaffolded at $HOME/.config/mllm/mllm.yaml on first launch)
 ./target/release/mllm
 ```
 
 ---
 
-## 9. License
+## 9. Troubleshooting
+
+- **Enterprise proxies / SSL inspection**: If your environment blocks external connections or inspects SSL traffic, ensure `curl` or `wget` is configured with the appropriate certificates (e.g. in `/etc/ssl/certs`).
+- **Configuration path**: Multi-LLM loads `$HOME/.config/mllm/mllm.yaml` by default, or an explicit path passed via `--config <path>` (`-c <path>`).
+- **Per-directory logs**: Conversation logs are partitioned per working directory device and inode at `$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl`.
+- **Rich formatting not rendering in an existing config**: Ensure `general_instructions` item 7 in your `mllm.yaml` includes:
+  ```yaml
+  7. Communication Standards: Be concise, clear, and actionable. Rich terminal formatting (inline & block Markdown, code blocks, ANSI colors, and emojis) is natively supported in the Center Coordinator chat.
+  ```
+
+---
+
+## 10. License
 
 Multi-LLM is open-source software licensed under the MIT License.

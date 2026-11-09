@@ -1,5 +1,4 @@
 # Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
-chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl"
 prefix_key: "alt"
 
 # General instructions shared across all LLM clients

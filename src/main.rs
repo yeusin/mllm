@@ -6,7 +6,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use mllm::app::AppState;
-use mllm::config::{load_config, run_init};
+use mllm::config::load_config;
 use mllm::ui;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, stdout};
@@ -32,16 +32,6 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Initialize a new mllm.yaml configuration file
-    Init {
-        /// Target path for configuration file [default: $HOME/.config/mllm/mllm.yaml]
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Overwrite configuration file if it already exists
-        #[arg(short, long)]
-        force: bool,
-    },
     /// Update existing mllm executable to the latest version
     Update {
         /// Check for available updates without applying them
@@ -86,16 +76,6 @@ impl Drop for TerminalGuard {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(Commands::Init { output, force }) = cli.command {
-        let stdin = io::stdin();
-        let mut stdout = io::stdout();
-        let target_path = match output {
-            Some(p) => p,
-            None => mllm::config::default_config_path()?,
-        };
-        return run_init(&mut stdin.lock(), &mut stdout, &target_path, force);
-    }
-
     if let Some(Commands::Update {
         check,
         version,
@@ -115,15 +95,11 @@ async fn main() -> Result<()> {
         return mllm::update::run_update(&opts, &mut stdout);
     }
 
-    // Determine config path and its parent directory
+    // Determine config path
     let (config_path, is_default_path) = match cli.config {
         Some(p) => (p, false),
         None => (mllm::config::default_config_path()?, true),
     };
-    let config_dir = config_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
 
     // On first launch with default path, auto-scaffold config if it does not exist
     if is_default_path && !config_path.exists() {
@@ -131,7 +107,7 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to scaffold default configuration at '{}'", config_path.display()))?;
     } else if !config_path.exists() {
         eprintln!(
-            "Notice: Configuration file '{}' not found. Run 'mllm init' to create one.",
+            "Notice: Configuration file '{}' not found.",
             config_path.display()
         );
     }
@@ -183,7 +159,7 @@ async fn main() -> Result<()> {
         })?;
 
     // Initialize application state
-    let mut app = match AppState::new(config, &config_dir, event_tx) {
+    let mut app = match AppState::new(config, None, event_tx) {
         Ok(a) => a,
         Err(e) => {
             let _ = disable_raw_mode();

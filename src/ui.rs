@@ -1132,12 +1132,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1215,12 +1214,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1297,12 +1295,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1437,12 +1434,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1546,7 +1542,7 @@ mod tests {
     fn test_render_coordinator_pane_thinking_card() {
         let mut app = AppState {
             config: AppConfig::default(),
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1620,12 +1616,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1734,12 +1729,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1817,12 +1811,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,

@@ -21,7 +21,6 @@ fn test_config_loading_and_defaults() {
         Path::new("mllm.yaml.example")
     };
     let cfg = load_config(config_path).expect("Failed to load mllm.yaml or mllm.yaml.example");
-    assert_eq!(cfg.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
     assert_eq!(cfg.prefix_key, "alt");
     assert!(!cfg.clients.is_empty());
     assert_eq!(cfg.clients[0].number, 1);
@@ -112,8 +111,7 @@ async fn test_startup_instructions_playback_on_app_init() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Universal output protocol.".to_string(),
         clients: vec![ClientConfig {
             number: 1,
@@ -126,7 +124,7 @@ async fn test_startup_instructions_playback_on_app_init() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config.clone(), &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config.clone(), Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Give asynchronous typing playback task time to complete
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
@@ -156,7 +154,7 @@ async fn test_startup_instructions_playback_on_app_init() {
     // Restart app in the same directory (warm start).
     // Client starts uninitialized, and first task prompt lazily injects instructions.
     let (tx2, _rx2) = mpsc::unbounded_channel();
-    let mut app2 = AppState::new(config, &tmp_dir, tx2).expect("Failed to restart AppState");
+    let mut app2 = AppState::new(config, Some(&tmp_dir), tx2).expect("Failed to restart AppState");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     assert_eq!(app2.initialized_clients.len(), 0);
@@ -215,8 +213,7 @@ async fn test_app_init_stops_and_errors_on_invalid_command() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
             number: 1,
@@ -229,7 +226,7 @@ async fn test_app_init_stops_and_errors_on_invalid_command() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let result = AppState::new(config, &tmp_dir, tx);
+    let result = AppState::new(config, Some(&tmp_dir), tx);
     assert!(result.is_err());
     let err = format!("{:#}", result.err().unwrap());
     assert!(err.contains("Failed to spawn command 'nonexistent_binary_xyz_404 --some-arg'"));
@@ -247,8 +244,7 @@ async fn test_forced_responder_assignment_and_earliest_default() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
             ClientConfig {
@@ -271,7 +267,7 @@ async fn test_forced_responder_assignment_and_earliest_default() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config.clone(), &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config.clone(), Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // 1. Earliest numbered agent should be Architect (number 1 < number 2)
     assert_eq!(app.default_responder(), Some("Architect"));
@@ -308,8 +304,7 @@ async fn test_multiline_multiple_peer_mentions_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
             ClientConfig {
@@ -340,7 +335,7 @@ async fn test_multiline_multiple_peer_mentions_routing() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Message from Architect with proposal header and multiple peer questions on subsequent lines
     let mut msg = ChatMessage::new_user(
@@ -368,8 +363,7 @@ async fn test_peer_consecutive_and_directive_mentions_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
             ClientConfig {
@@ -400,7 +394,7 @@ async fn test_peer_consecutive_and_directive_mentions_routing() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Case 1: Multiple leading mentions on the same line with @User
     let mut msg1 = ChatMessage::new_user(
@@ -444,8 +438,7 @@ async fn test_role_instructions_isolated_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions.".to_string(),
         clients: vec![
             ClientConfig {
@@ -468,7 +461,7 @@ async fn test_role_instructions_isolated_routing() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // General instructions broadcast to all agents
     let gen_msg = ChatMessage::new_coordinator(
@@ -512,8 +505,7 @@ async fn test_coordinator_input_typing_and_navigation() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
             number: 1,
@@ -526,7 +518,7 @@ async fn test_coordinator_input_typing_and_navigation() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Initially focused on coordinator input with default responder
     assert_eq!(app.active_pane, 0);
@@ -599,8 +591,7 @@ async fn test_tab_autocomplete_available_agents() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
             ClientConfig {
@@ -631,7 +622,7 @@ async fn test_tab_autocomplete_available_agents() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Scenario 1: User types '@' and presses Tab repeatedly
     app.composer_input = "@".to_string();
@@ -706,8 +697,7 @@ async fn test_coordinator_multiline_input_and_navigation() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
             number: 1,
@@ -720,7 +710,7 @@ async fn test_coordinator_multiline_input_and_navigation() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     let make_mod_key = |code, modifiers| KeyEvent {
         code,
@@ -838,13 +828,12 @@ async fn test_atomic_composite_prompt_lazy_injection() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     // Create pre-existing chat log to simulate a warm start
-    let chat_file = tmp_dir.join("test_chat.jsonl");
+    let chat_file = tmp_dir.join("chat.jsonl");
     let prior_msg = ChatMessage::new_user("Prior session question".to_string());
     let _ = mllm::chat::append_message(&chat_file, &prior_msg);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Universal protocol.".to_string(),
         clients: vec![
             ClientConfig {
@@ -867,7 +856,7 @@ async fn test_atomic_composite_prompt_lazy_injection() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Warm start: no startup instructions appended, initialized_clients is empty
     assert_eq!(app.chat_history.len(), 1);
@@ -914,13 +903,12 @@ async fn test_center_pane_mouse_selection_and_dual_tier_copy() {
     let tmp_dir = std::env::temp_dir().join(format!("test_mllm_center_sel_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp_dir);
 
-    let chat_file = tmp_dir.join("test_chat.jsonl");
+    let chat_file = tmp_dir.join("chat.jsonl");
     let msg1 = ChatMessage::new_user("First coordinator message for selection testing".to_string());
     let _ = mllm::chat::append_message(&chat_file, &msg1);
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
             ClientConfig {
@@ -935,7 +923,7 @@ async fn test_center_pane_mouse_selection_and_dual_tier_copy() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Render app on 100x30 test terminal to populate layout and coordinator_buffer
     let backend = TestBackend::new(100, 30);
@@ -1012,11 +1000,10 @@ async fn test_realtime_thinking_indicator_lifecycle() {
     let tmp_dir = std::env::temp_dir().join(format!("test_mllm_thinking_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp_dir);
 
-    let chat_file = tmp_dir.join("test_chat.jsonl");
+    let chat_file = tmp_dir.join("chat.jsonl");
 
     let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Protocol".to_string(),
         clients: vec![
             ClientConfig {
@@ -1031,7 +1018,7 @@ async fn test_realtime_thinking_indicator_lifecycle() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // 1. Initial state: active_tasks is empty
     assert!(app.active_tasks.is_empty());
@@ -1075,11 +1062,10 @@ async fn test_multi_agent_individual_finish_immediate_display() {
 
     let tmp_dir = std::env::temp_dir().join(format!("test_multi_agent_finish_{}", std::process::id()));
     let _ = fs::create_dir_all(&tmp_dir);
-    let chat_file = tmp_dir.join("shared_chat.jsonl");
+    let chat_file = tmp_dir.join("chat.jsonl");
 
     let config = AppConfig {
-        chat_file: "shared_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Protocol".to_string(),
         clients: vec![
             ClientConfig {
@@ -1102,7 +1088,7 @@ async fn test_multi_agent_individual_finish_immediate_display() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("Failed to initialize AppState");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("Failed to initialize AppState");
 
     // Dispatch message mentioning both agents
     let msg = ChatMessage::new_user("@Architect @Reviewer: Parallel evaluation".to_string());
@@ -1150,72 +1136,6 @@ async fn test_multi_agent_individual_finish_immediate_display() {
 
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
-fn test_init_command_interactive_role_assignment() {
-    use mllm::config::{load_config, run_init, AVAILABLE_CLIENTS};
-    use std::fs;
-
-    let tmp_dir = std::env::temp_dir().join(format!("test_integration_init_{}", std::process::id()));
-    let _ = fs::create_dir_all(&tmp_dir);
-    let target_yaml = tmp_dir.join("mllm.yaml");
-
-    assert!(!target_yaml.exists());
-
-    // User assigns:
-    // Role 1 (Architect): claude
-    // Role 2 (Reviewer): codex
-    // Role 3 (Researcher): opencode
-    // Role 4 (TechnicalWriter): agy
-    // Role 5 (Designer): claude
-    // Role 6 (Marketer): codex
-    let mut user_inputs = "claude\ncodex\nopencode\nagy\nclaude\ncodex\n".as_bytes();
-    let mut console_output = Vec::new();
-
-    run_init(&mut user_inputs, &mut console_output, &target_yaml, false)
-        .expect("run_init should succeed on non-existent mllm.yaml");
-
-    assert!(target_yaml.exists(), "mllm.yaml must be created");
-
-    let cfg = load_config(&target_yaml).expect("Generated mllm.yaml must be valid YAML");
-    assert_eq!(cfg.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
-    assert_eq!(cfg.prefix_key, "alt");
-    assert_eq!(cfg.clients.len(), 6);
-    assert_eq!(cfg.clients[0].command, "claude");
-    assert_eq!(cfg.clients[1].command, "codex");
-    assert_eq!(cfg.clients[2].command, "opencode");
-    assert_eq!(cfg.clients[3].command, "agy");
-    assert_eq!(cfg.clients[4].command, "claude");
-    assert_eq!(cfg.clients[5].command, "codex");
-
-    for client in &cfg.clients {
-        assert!(
-            AVAILABLE_CLIENTS.contains(&client.command.as_str()),
-            "Command '{}' must be one of the available LLM clients",
-            client.command
-        );
-    }
-
-    // Attempting to run init again without force skips recreation
-    let mut repeat_input = "agy\nagy\nagy\nagy\nagy\nagy\n".as_bytes();
-    let mut skip_output = Vec::new();
-    run_init(&mut repeat_input, &mut skip_output, &target_yaml, false).unwrap();
-    let skip_msg = String::from_utf8_lossy(&skip_output);
-    assert!(skip_msg.contains("already exists in the project. Skipping creation"));
-
-    // File content remains unchanged
-    let unchanged_cfg = load_config(&target_yaml).unwrap();
-    assert_eq!(unchanged_cfg.clients[0].command, "claude");
-
-    // Overwriting with force = true
-    let mut force_input = "agy\nagy\nagy\nagy\nagy\nagy\n".as_bytes();
-    let mut force_output = Vec::new();
-    run_init(&mut force_input, &mut force_output, &target_yaml, true).unwrap();
-    let overwritten_cfg = load_config(&target_yaml).unwrap();
-    assert_eq!(overwritten_cfg.clients[0].command, "agy");
-
-    let _ = fs::remove_dir_all(&tmp_dir);
 }
 
 #[test]
@@ -1291,7 +1211,7 @@ fn test_seeded_hostile_log_startup_render_sanitization() {
 
     let tmp_dir = std::env::temp_dir().join(format!("test_hostile_log_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).unwrap();
-    let chat_path = tmp_dir.join("shared_chat.jsonl");
+    let chat_path = tmp_dir.join("chat.jsonl");
 
     // Seed hostile messages containing injection vectors
     let hostile1 = ChatMessage::new_user(
@@ -1305,8 +1225,7 @@ fn test_seeded_hostile_log_startup_render_sanitization() {
     append_message(&chat_path, &hostile2).unwrap();
 
     let config = AppConfig {
-        chat_file: "shared_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
+        prefix_key: "alt".to_string(),
         general_instructions: "Universal protocol.".to_string(),
         clients: vec![ClientConfig {
             number: 1,
@@ -1319,7 +1238,7 @@ fn test_seeded_hostile_log_startup_render_sanitization() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).expect("AppState initialization should succeed");
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).expect("AppState initialization should succeed");
     assert_eq!(app.chat_history.len(), 2);
 
     // Render into TestBackend
@@ -1375,90 +1294,6 @@ fn test_rich_markdown_routing_isolation() {
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let config = AppConfig {
-        chat_file: "shared_chat.jsonl".to_string(),
-        prefix_key: "ctrl+b".to_string(),
-        general_instructions: String::new(),
-        clients: vec![
-            ClientConfig {
-                number: 1,
-                name: "Architect".to_string(),
-                role: "Lead Architect".to_string(),
-                command: "cat".to_string(),
-                instructions: "".to_string(),
-                extra_args: vec![],
-            },
-            ClientConfig {
-                number: 2,
-                name: "Reviewer".to_string(),
-                role: "Reviewer".to_string(),
-                command: "cat".to_string(),
-                instructions: "".to_string(),
-                extra_args: vec![],
-            },
-        ],
-    };
-
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).unwrap();
-
-    let msg = ChatMessage::new_user(hostile_msg_text.to_string());
-    let targets = app.determine_target_clients(&msg);
-    // Client index 1 is Reviewer:
-    assert_eq!(targets, vec![1]);
-
-    app.shutdown();
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
-fn test_first_launch_config_and_history_scaffolding() {
-    use mllm::app::AppState;
-    use mllm::config::{
-        ensure_default_config_exists, get_working_dir_dev_ino, load_config,
-    };
-    use tokio::sync::mpsc;
-
-    let tmp_dir = std::env::temp_dir().join(format!("test_scaffold_{}", uuid::Uuid::new_v4()));
-    let tmp_config_path = tmp_dir.join(".config").join("mllm").join("mllm.yaml");
-
-    // 1. First launch scaffolds default config
-    let created = ensure_default_config_exists(&tmp_config_path).expect("Scaffolding should succeed");
-    assert!(created);
-    assert!(tmp_config_path.exists());
-
-    // 2. Parsed default config matches expected defaults
-    let config = load_config(&tmp_config_path).expect("Scaffolded config should be valid YAML");
-    assert_eq!(config.prefix_key, "alt");
-    assert_eq!(config.chat_file, "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl");
-
-    // 3. (dev, ino)-based path resolution
-    let resolved_chat = config.resolve_chat_file_path(tmp_config_path.parent().unwrap()).unwrap();
-    let (dev, ino) = get_working_dir_dev_ino().unwrap();
-    assert!(resolved_chat.to_string_lossy().contains(&format!("{}_{}", dev, ino)));
-    assert!(resolved_chat.to_string_lossy().ends_with("chat.jsonl"));
-
-    // 4. History log creation via AppState::new
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, tmp_config_path.parent().unwrap(), tx)
-        .expect("AppState::new should succeed with scaffolded config");
-    assert!(app.chat_file_path.exists());
-
-    app.shutdown();
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
-fn test_alt_prefix_and_direct_shortcuts() {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
-    use mllm::app::AppState;
-    use mllm::config::{AppConfig, ClientConfig};
-    use tokio::sync::mpsc;
-
-    let tmp_dir = std::env::temp_dir().join(format!("test_alt_shortcuts_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
-    let config = AppConfig {
-        chat_file: "test_chat.jsonl".to_string(),
         prefix_key: "alt".to_string(),
         general_instructions: String::new(),
         clients: vec![
@@ -1482,7 +1317,87 @@ fn test_alt_prefix_and_direct_shortcuts() {
     };
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut app = AppState::new(config, &tmp_dir, tx).unwrap();
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).unwrap();
+
+    let msg = ChatMessage::new_user(hostile_msg_text.to_string());
+    let targets = app.determine_target_clients(&msg);
+    // Client index 1 is Reviewer:
+    assert_eq!(targets, vec![1]);
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_first_launch_config_and_history_scaffolding() {
+    use mllm::app::AppState;
+    use mllm::config::{
+        default_chat_log_path, ensure_default_config_exists, get_working_dir_dev_ino, load_config,
+    };
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_scaffold_{}", uuid::Uuid::new_v4()));
+    let tmp_config_path = tmp_dir.join(".config").join("mllm").join("mllm.yaml");
+
+    // 1. First launch scaffolds default config
+    let created = ensure_default_config_exists(&tmp_config_path).expect("Scaffolding should succeed");
+    assert!(created);
+    assert!(tmp_config_path.exists());
+
+    // 2. Parsed default config matches expected defaults
+    let config = load_config(&tmp_config_path).expect("Scaffolded config should be valid YAML");
+    assert_eq!(config.prefix_key, "alt");
+    // 3. (dev, ino)-based path resolution via default_chat_log_path
+    let resolved_chat = default_chat_log_path().unwrap();
+    let (dev, ino) = get_working_dir_dev_ino().unwrap();
+    assert!(resolved_chat.to_string_lossy().contains(&format!("{}_{}", dev, ino)));
+    assert!(resolved_chat.to_string_lossy().ends_with("chat.jsonl"));
+
+    // 4. History log creation via AppState::new
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, Some(tmp_config_path.parent().unwrap()), tx)
+        .expect("AppState::new should succeed with scaffolded config");
+    assert!(app.chat_file_path.exists());
+
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_alt_prefix_and_direct_shortcuts() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
+    use mllm::app::AppState;
+    use mllm::config::{AppConfig, ClientConfig};
+    use tokio::sync::mpsc;
+
+    let tmp_dir = std::env::temp_dir().join(format!("test_alt_shortcuts_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let config = AppConfig {
+        prefix_key: "alt".to_string(),
+        general_instructions: String::new(),
+        clients: vec![
+            ClientConfig {
+                number: 1,
+                name: "Architect".to_string(),
+                role: "Lead Architect".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+            ClientConfig {
+                number: 2,
+                name: "Reviewer".to_string(),
+                role: "Reviewer".to_string(),
+                command: "cat".to_string(),
+                instructions: "".to_string(),
+                extra_args: vec![],
+            },
+        ],
+    };
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = AppState::new(config, Some(&tmp_dir), tx).unwrap();
     assert_eq!(app.active_pane, 0);
 
     // 1. Direct Alt+1 jumps to pane 1
@@ -1545,50 +1460,7 @@ fn test_alt_prefix_and_direct_shortcuts() {
 }
 
 #[test]
-fn test_legacy_config_auto_migration_preservation() {
-    use mllm::config::{ensure_default_config_exists, load_config};
-
-    let tmp_dir = std::env::temp_dir().join(format!("test_mig_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
-    let legacy_yaml = tmp_dir.join("mllm.yaml");
-    let custom_content = r#"
-chat_file: "custom_legacy_log.jsonl"
-prefix_key: "ctrl+a"
-general_instructions: "Custom Instructions"
-clients:
-  - number: 1
-    name: "CustomAgent"
-    role: "Tester"
-    command: "custom_cmd"
-"#;
-    std::fs::write(&legacy_yaml, custom_content).unwrap();
-
-    let target_central = tmp_dir.join(".config").join("mllm").join("mllm.yaml");
-
-    // Temporarily switch cwd to tmp_dir to test auto-migration of ./mllm.yaml
-    let orig_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&tmp_dir).unwrap();
-
-    let migrated = ensure_default_config_exists(&target_central).unwrap();
-    assert!(migrated);
-    assert!(target_central.exists());
-
-    let loaded = load_config(&target_central).unwrap();
-    assert_eq!(loaded.chat_file, "custom_legacy_log.jsonl");
-    assert_eq!(loaded.prefix_key, "ctrl+a");
-    assert_eq!(loaded.clients[0].name, "CustomAgent");
-
-    // Restore original cwd
-    std::env::set_current_dir(&orig_cwd).unwrap();
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
 fn test_dev_ino_cross_mount_collision_isolation() {
-    use mllm::config::AppConfig;
-    use std::path::Path;
-
     // Simulate two projects at root directory of different mounts (both having st_ino = 2)
     let template = "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl";
 
@@ -1604,15 +1476,6 @@ fn test_dev_ino_cross_mount_collision_isolation() {
     assert_ne!(path1, path2);
     assert!(path1.contains("64512_2"));
     assert!(path2.contains("64513_2"));
-
-    // Also verify AppConfig template replacement for both tokens
-    let config = AppConfig {
-        chat_file: "$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl".to_string(),
-        ..AppConfig::default()
-    };
-    let resolved = config.resolve_chat_file_path(Path::new(".")).unwrap();
-    assert!(!resolved.to_string_lossy().contains("{dev}_{ino}"));
-    assert!(!resolved.to_string_lossy().contains("{working_dir_inode}"));
 }
 
 #[test]

@@ -72,11 +72,20 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         config: AppConfig,
-        config_dir: &Path,
+        custom_chat_path: Option<&Path>,
         event_tx: UnboundedSender<()>,
     ) -> Result<Self> {
         let parsed_prefix = parse_prefix_key(&config.prefix_key)?;
-        let chat_file_path = config.resolve_chat_file_path(config_dir)?;
+        let chat_file_path = match custom_chat_path {
+            Some(p) => {
+                if p.is_dir() {
+                    p.join("chat.jsonl")
+                } else {
+                    p.to_path_buf()
+                }
+            }
+            None => crate::config::default_chat_log_path()?,
+        };
 
         // Ensure shared chat log file exists on disk (creates it on first run)
         crate::config::ensure_chat_log_exists(&chat_file_path)?;
@@ -1369,8 +1378,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp_dir);
 
         let config = AppConfig {
-            chat_file: "test_chat.jsonl".to_string(),
-            prefix_key: "ctrl+b".to_string(),
+            prefix_key: "alt".to_string(),
             general_instructions: "Instructions".to_string(),
             clients: vec![
                 crate::config::ClientConfig {
@@ -1401,7 +1409,7 @@ mod tests {
         };
 
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut app = AppState::new(config, &tmp_dir, tx).unwrap();
+        let mut app = AppState::new(config, Some(&tmp_dir), tx).unwrap();
 
         // 1. Mention routing: @Reviewer at the beginning of the text
         let msg = ChatMessage::new_user("@Reviewer Please audit this".to_string());
@@ -1523,12 +1531,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1664,8 +1671,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![
                     ClientConfig {
@@ -1694,7 +1700,7 @@ mod tests {
                     },
                 ],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1788,12 +1794,11 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1901,12 +1906,11 @@ mod tests {
         use std::collections::{HashMap, HashSet};
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: false,
             input_focused: true,
@@ -1969,12 +1973,11 @@ mod tests {
         use std::collections::{HashMap, HashSet};
         let mut app = AppState {
             config: AppConfig {
-                chat_file: "test.jsonl".to_string(),
-                prefix_key: "ctrl+b".to_string(),
+                prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
             },
-            parsed_prefix: parse_prefix_key("ctrl+b").unwrap(),
+            parsed_prefix: parse_prefix_key("alt").unwrap(),
             active_pane: 0,
             prefix_active: true,
             input_focused: true,

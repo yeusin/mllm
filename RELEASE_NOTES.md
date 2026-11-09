@@ -2,10 +2,10 @@
 
 ---
 
-## Release v0.4.0 (Unreleased)
+## Release v0.4.0 (November 2026)
 
-**Theme**: Full-Fidelity Rich Coordinator Chat (Markdown, ANSI Colors, Emojis) & In-Memory Session Boundaries  
-**Commit Range**: `eaed037` – `fff3ab1`
+**Release Tag**: [`v0.4.0`](https://github.com/yeusin/mllm/releases/tag/v0.4.0)  
+**Theme**: Full-Fidelity Rich Coordinator Chat, Centralized XDG Config & Inode-Isolated History Logs
 
 Multi-LLM v0.4.0 upgrades Pane 0 (Center Coordinator Chat) with an in-tree rich terminal renderer supporting CommonMark formatting, strict ECMA-48 SGR ANSI color decoding with visible caret sanitization, and full UTF-8 emoji display width alignment. It also introduces viewport-windowed height caching and eliminates legacy terminal startup boundary markers.
 
