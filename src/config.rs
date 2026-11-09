@@ -11,6 +11,13 @@ pub struct AppConfig {
     pub prefix_key: String,
     #[serde(default)]
     pub general_instructions: String,
+    /// Per-dispatch suffix appended to every routed task (see docs/task-dispatch-protocol.md).
+    /// Placeholders: {chat_file} (alias {chatfile}), {id}, {client_name}, {client_role}.
+    /// No built-in default: absent or empty means no suffix is appended; the text lives in
+    /// the user's `mllm.yaml` (auto-scaffolded on first launch via `ensure_default_config_exists`,
+    /// which seeds it from `SEED_MANDATORY_PROTOCOL`; `mllm.yaml.example` ships the same text).
+    #[serde(default)]
+    pub mandatory_protocol: String,
     #[serde(default)]
     pub clients: Vec<ClientConfig>,
 }
@@ -27,6 +34,13 @@ pub struct ClientConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 }
+
+/// Seed text written into the first-launch scaffolded config (`ensure_default_config_exists`)
+/// and shipped in `mllm.yaml.example`.
+/// This is NOT a runtime default — the runtime has no built-in protocol; the user's
+/// `mllm.yaml` is the sole source. Placeholders: `{chat_file}` (alias `{chatfile}`),
+/// `{id}` (task ref), `{client_name}`, `{client_role}`.
+pub const SEED_MANDATORY_PROTOCOL: &str = "[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {chat_file} with \"reply_to\": \"{id}\", \"sender\": \"{client_name}\", \"role\": \"{client_role}\". Terminal output alone is ignored by the coordinator.";
 
 fn default_prefix() -> String {
     "alt".to_string()
@@ -134,6 +148,7 @@ impl Default for AppConfig {
         Self {
             prefix_key: default_prefix(),
             general_instructions: String::new(),
+            mandatory_protocol: String::new(),
             clients: Vec::new(),
         }
     }
@@ -244,6 +259,9 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
 pub fn default_init_config() -> AppConfig {
     AppConfig {
         prefix_key: default_prefix(),
+        // Seed text for generated configs only — the runtime has no built-in protocol;
+        // whatever is in the user's mllm.yaml is the sole source (empty = suffix disabled).
+        mandatory_protocol: SEED_MANDATORY_PROTOCOL.to_string(),
         general_instructions: r#"Shared Log Coordination & Output Protocol:
 1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
 2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
@@ -411,6 +429,9 @@ mod tests {
         // Loading created config has default values
         let loaded = load_config(&tmp_conf).unwrap();
         assert_eq!(loaded.prefix_key, "alt");
+        // Generated config seeds the editable mandatory protocol (placeholders intact).
+        assert!(loaded.mandatory_protocol.contains("{chat_file}"));
+        assert!(loaded.mandatory_protocol.contains("{client_name}"));
 
         // Subsequent call does not overwrite
         let created_again = ensure_default_config_exists(&tmp_conf).unwrap();
@@ -451,6 +472,45 @@ mod tests {
         let chat_var = vars.get("chat_file").unwrap();
         assert!(chat_var.contains(&dev_ino));
         assert!(chat_var.ends_with("chat.jsonl"));
+    }
+
+    #[test]
+    fn test_mandatory_protocol_absent_means_disabled() {
+        let yaml = r#"
+prefix_key: "alt"
+clients:
+  - number: 1
+    name: "Architect"
+    role: "Lead Architect"
+"#;
+        let loaded: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        // No built-in default: absent field => empty => runtime appends no suffix.
+        assert_eq!(loaded.mandatory_protocol, String::new());
+
+        // The first-launch scaffolded config seeds the standard text (placeholders intact).
+        let seeded = default_init_config();
+        assert!(!seeded.mandatory_protocol.is_empty());
+        assert!(seeded.mandatory_protocol.contains("{chat_file}"));
+        assert!(seeded.mandatory_protocol.contains("{id}"));
+        assert!(seeded.mandatory_protocol.contains("{client_name}"));
+        assert!(seeded.mandatory_protocol.contains("{client_role}"));
+    }
+
+    #[test]
+    fn test_mandatory_protocol_custom_template() {
+        let yaml = r#"
+prefix_key: "alt"
+mandatory_protocol: 'Finish by writing to {chat_file} (task {id} for {client_name} / {client_role}).'
+clients:
+  - number: 1
+    name: "Architect"
+    role: "Lead Architect"
+"#;
+        let loaded: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            loaded.mandatory_protocol,
+            "Finish by writing to {chat_file} (task {id} for {client_name} / {client_role})."
+        );
     }
 
     #[test]

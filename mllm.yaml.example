@@ -1,6 +1,14 @@
 # Multi-LLM Configuration ($HOME/.config/mllm/mllm.yaml)
 prefix_key: "alt"
 
+# Per-dispatch suffix appended to every routed task (the "[MANDATORY PROTOCOL]" block).
+# Placeholders: {chat_file} (or {chatfile}), {id} (task ref), {client_name}, {client_role}.
+# This field is the sole source of the protocol text — there is no built-in default;
+# removing it (or setting it empty) disables the suffix. {id}/{client_name}/{client_role}
+# are JSON-escaped on substitution; {chat_file} is inserted raw (prose position).
+# Seed-text source of truth: SEED_MANDATORY_PROTOCOL in src/config.rs.
+mandatory_protocol: '[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {chat_file} with "reply_to": "{id}", "sender": "{client_name}", "role": "{client_role}". Terminal output alone is ignored by the coordinator.'
+
 # General instructions shared across all LLM clients
 general_instructions: |
   Shared Log Coordination & Output Protocol:

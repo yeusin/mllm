@@ -1147,6 +1147,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1237,6 +1238,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1320,6 +1322,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1465,6 +1468,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1653,6 +1657,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1768,6 +1773,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1852,6 +1858,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],

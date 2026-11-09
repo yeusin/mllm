@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 fn make_app(client_name: &str, chat_file: &std::path::Path) -> AppState {
     let cfg = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions".to_string(),
         clients: vec![ClientConfig {

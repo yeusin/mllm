@@ -111,6 +111,7 @@ async fn test_startup_instructions_playback_on_app_init() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Universal output protocol.".to_string(),
         clients: vec![ClientConfig {
@@ -213,6 +214,7 @@ async fn test_app_init_stops_and_errors_on_invalid_command() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
@@ -244,6 +246,7 @@ async fn test_forced_responder_assignment_and_earliest_default() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
@@ -304,6 +307,7 @@ async fn test_multiline_multiple_peer_mentions_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
@@ -363,6 +367,7 @@ async fn test_peer_consecutive_and_directive_mentions_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
@@ -438,6 +443,7 @@ async fn test_role_instructions_isolated_routing() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions.".to_string(),
         clients: vec![
@@ -505,6 +511,7 @@ async fn test_coordinator_input_typing_and_navigation() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
@@ -591,6 +598,7 @@ async fn test_tab_autocomplete_available_agents() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
@@ -697,6 +705,7 @@ async fn test_coordinator_multiline_input_and_navigation() {
     let _ = std::fs::create_dir_all(&tmp_dir);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![ClientConfig {
@@ -833,6 +842,7 @@ async fn test_atomic_composite_prompt_lazy_injection() {
     let _ = mllm::chat::append_message(&chat_file, &prior_msg);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Universal protocol.".to_string(),
         clients: vec![
@@ -908,6 +918,7 @@ async fn test_center_pane_mouse_selection_and_dual_tier_copy() {
     let _ = mllm::chat::append_message(&chat_file, &msg1);
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "".to_string(),
         clients: vec![
@@ -1003,6 +1014,7 @@ async fn test_realtime_thinking_indicator_lifecycle() {
     let chat_file = tmp_dir.join("chat.jsonl");
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol".to_string(),
         clients: vec![
@@ -1067,6 +1079,7 @@ async fn test_multi_agent_individual_finish_immediate_display() {
     let chat_file = tmp_dir.join("chat.jsonl");
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol".to_string(),
         clients: vec![
@@ -1231,6 +1244,7 @@ fn test_seeded_hostile_log_startup_render_sanitization() {
     append_message(&chat_path, &hostile2).unwrap();
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Universal protocol.".to_string(),
         clients: vec![ClientConfig {
@@ -1300,6 +1314,7 @@ fn test_rich_markdown_routing_isolation() {
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: String::new(),
         clients: vec![
@@ -1380,6 +1395,7 @@ fn test_alt_prefix_and_direct_shortcuts() {
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: String::new(),
         clients: vec![
@@ -1553,6 +1569,7 @@ async fn test_task_dispatch_mandatory_protocol_suffix() {
     let chat_file = tmp_dir.join("chat.jsonl");
 
     let cfg = mllm::config::AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions".to_string(),
         clients: vec![mllm::config::ClientConfig {
@@ -1587,6 +1604,7 @@ async fn test_watchdog_fallback_and_idempotent_uuid5() {
     let chat_file = tmp_dir.join("chat.jsonl");
 
     let cfg = mllm::config::AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions".to_string(),
         clients: vec![mllm::config::ClientConfig {
@@ -1652,6 +1670,7 @@ async fn test_watchdog_nudge_echo_progression() {
     let chat_file = tmp_dir.join("chat.jsonl");
 
     let cfg = mllm::config::AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: "Protocol instructions".to_string(),
         clients: vec![mllm::config::ClientConfig {

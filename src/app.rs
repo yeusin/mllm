@@ -1,6 +1,7 @@
 use crate::chat::{
     append_message, build_startup_instructions_with_vars, extract_mentions,
-    extract_role_instruction_target, load_messages, strip_at_mentions, ChatMessage,
+    extract_role_instruction_target, load_messages, replace_instruction_placeholders,
+    strip_at_mentions, ChatMessage,
 };
 use crate::config::{parse_prefix_key, AppConfig, ParsedPrefix};
 use crate::pty::ClientPane;
@@ -1267,14 +1268,22 @@ impl AppState {
                         );
                     }
                     let chat_str = self.chat_file_path.display().to_string();
-                    let mandatory_suffix = format!(
-                        "\n\n[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {} with \"reply_to\": \"{}\", \"sender\": \"{}\", \"role\": \"{}\". Terminal output alone is ignored by the coordinator.",
-                        chat_str, msg.id, client.name, client.role
+                    let mandatory_suffix = build_mandatory_protocol_suffix(
+                        &self.config.mandatory_protocol,
+                        &chat_str,
+                        &msg.id,
+                        &client.name,
+                        &client.role,
                     );
-                    let task_prompt = format!(
-                        "Task from {} ({}): {} [Ref: {}]{}",
-                        msg.sender, msg.role, sanitized_content, msg.id, mandatory_suffix
+                    let task_core = format!(
+                        "Task from {} ({}): {} [Ref: {}]",
+                        msg.sender, msg.role, sanitized_content, msg.id
                     );
+                    let task_prompt = if mandatory_suffix.is_empty() {
+                        task_core
+                    } else {
+                        format!("{}{}", task_core, mandatory_suffix)
+                    };
                     // Atomic composite prompt: prepend startup instructions (general + role) if client hasn't been initialized yet
                     let prompt = if !self.initialized_clients.contains(&idx) {
                         self.initialized_clients.insert(idx);
@@ -1629,10 +1638,114 @@ pub fn copy_to_clipboard_osc52(text: &str) {
     let _ = stdout.flush();
 }
 
+/// Renders the configured `mandatory_protocol` template for one dispatched task.
+/// Supported placeholders: `{chat_file}` (alias `{chatfile}`), `{id}`,
+/// `{client_name}`, `{client_role}`; unknown placeholders are left untouched.
+/// `{id}`/`{client_name}`/`{client_role}` are JSON-string-escaped (they sit inside
+/// quoted JSON in the standard template); `{chat_file}` is left raw (prose position).
+/// The blank-line separator is added here so templates stay plain single-line text.
+/// An empty or whitespace-only template disables the suffix entirely — the protocol
+/// text lives solely in the user's `mllm.yaml`; there is no built-in default.
+pub fn build_mandatory_protocol_suffix(
+    template: &str,
+    chat_file: &str,
+    task_id: &str,
+    client_name: &str,
+    client_role: &str,
+) -> String {
+    if template.trim().is_empty() {
+        return String::new();
+    }
+    let mut vars = HashMap::new();
+    vars.insert("chat_file".to_string(), chat_file.to_string());
+    vars.insert("chatfile".to_string(), chat_file.to_string());
+    vars.insert("id".to_string(), json_escape_inner(task_id));
+    vars.insert("client_name".to_string(), json_escape_inner(client_name));
+    vars.insert("client_role".to_string(), json_escape_inner(client_role));
+    format!("\n\n{}", replace_instruction_placeholders(template, &vars))
+}
+
+/// Escapes `s` for embedding inside a JSON string literal, without the surrounding quotes.
+fn json_escape_inner(s: &str) -> String {
+    let full = serde_json::to_string(s).expect("String serialization cannot fail");
+    full[1..full.len() - 1].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn test_mandatory_protocol_suffix_substitution() {
+        // Empty / whitespace-only template disables the suffix entirely (no built-in default).
+        assert_eq!(build_mandatory_protocol_suffix("", "/tmp/c.jsonl", "r", "A", "B"), "");
+        assert_eq!(
+            build_mandatory_protocol_suffix("   \n\t ", "/tmp/c.jsonl", "r", "A", "B"),
+            ""
+        );
+
+        let custom =
+            "Log to {chat_file} (task {id} by {client_name} as {client_role}) {unknown_stays}";
+        let suffix = build_mandatory_protocol_suffix(
+            custom,
+            "/tmp/chat.jsonl",
+            "abc-123",
+            "Architect",
+            "Lead Architect",
+        );
+        assert!(suffix.starts_with("\n\n"));
+        assert!(suffix.contains(
+            "Log to /tmp/chat.jsonl (task abc-123 by Architect as Lead Architect) {unknown_stays}"
+        ));
+
+        // {chatfile} alias resolves to the same path.
+        let suffix = build_mandatory_protocol_suffix(
+            "file={chatfile}",
+            "/tmp/c.jsonl",
+            "ref-1",
+            "Reviewer",
+            "Auditor",
+        );
+        assert!(suffix.starts_with("\n\n"));
+        assert!(suffix.contains("file=/tmp/c.jsonl"));
+
+        // JSON-string positions are escaped (quotes/backslashes); {chat_file} stays raw prose.
+        let suffix = build_mandatory_protocol_suffix(
+            "\"reply_to\": \"{id}\", \"sender\": \"{client_name}\", \"role\": \"{client_role}\", path {chat_file}",
+            "/tmp/w\\in,d.jsonl",
+            "id\"q",
+            "Bad \"Name\"",
+            "Role\\With\\Slashes",
+        );
+        assert!(suffix.contains(
+            "\"reply_to\": \"id\\\"q\", \"sender\": \"Bad \\\"Name\\\"\", \"role\": \"Role\\\\With\\\\Slashes\", path /tmp/w\\in,d.jsonl"
+        ));
+
+        // Embedded newline in a client name is escaped, not passed through.
+        let suffix = build_mandatory_protocol_suffix(
+            "\"sender\": \"{client_name}\"",
+            "/tmp/c.jsonl",
+            "r",
+            "Bad\nName",
+            "Role",
+        );
+        assert!(suffix.contains("\"sender\": \"Bad\\nName\""));
+
+        // The init-seeded text renders the recognizable skeleton; normal values are unchanged.
+        let seeded = crate::config::default_init_config().mandatory_protocol;
+        let suffix = build_mandatory_protocol_suffix(
+            &seeded,
+            "/home/u/.config/mllm/history/1_2/chat.jsonl",
+            "ref-9",
+            "Reviewer",
+            "Reviewer & Auditor",
+        );
+        assert_eq!(
+            suffix,
+            "\n\n[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to /home/u/.config/mllm/history/1_2/chat.jsonl with \"reply_to\": \"ref-9\", \"sender\": \"Reviewer\", \"role\": \"Reviewer & Auditor\". Terminal output alone is ignored by the coordinator."
+        );
+    }
 
     #[tokio::test]
     async fn test_app_routing_and_fallback() {
@@ -1640,6 +1753,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp_dir);
 
         let config = AppConfig {
+            mandatory_protocol: String::new(),
             prefix_key: "alt".to_string(),
             general_instructions: "Instructions".to_string(),
             clients: vec![
@@ -1793,6 +1907,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -1935,6 +2050,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![
@@ -2060,6 +2176,7 @@ mod tests {
 
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -2174,6 +2291,7 @@ mod tests {
         use std::collections::{HashMap, HashSet};
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],
@@ -2243,6 +2361,7 @@ mod tests {
         use std::collections::{HashMap, HashSet};
         let mut app = AppState {
             config: AppConfig {
+                mandatory_protocol: String::new(),
                 prefix_key: "alt".to_string(),
                 general_instructions: String::new(),
                 clients: vec![],

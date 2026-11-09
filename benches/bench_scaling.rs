@@ -29,6 +29,7 @@ fn create_app_with_clients(client_names: Vec<(&str, &str)>) -> (AppState, std::p
         .collect();
 
     let config = AppConfig {
+        mandatory_protocol: String::new(),
         prefix_key: "alt".to_string(),
         general_instructions: String::new(),
         clients,
