@@ -36,10 +36,17 @@ Multi-LLM v0.4.0 upgrades Pane 0 (Center Coordinator Chat) with an in-tree rich 
 - **Zero PTY Stdin Buffer Pollution**: Deprecated legacy `BOUNDARY_MARKER` string emission to child PTY stdin.
 - **Programmatic Filtering**: Session boundary tracked exclusively via in-memory `initial_message_ids: HashSet<String>`, cleanly filtering historical records from autonomous dispatch while rendering history in the Coordinator UI.
 
+#### 4. Centralized XDG Configuration, Partitioned History & Legacy Deprecation (`src/config.rs`, `src/main.rs`)
+- **Centralized XDG Config**: Multi-LLM defaults to `$HOME/.config/mllm/mllm.yaml` with automatic first-launch scaffolding and 0700/0600 file permission hardening.
+- **Device & Inode Isolated History**: Conversation event logs are partitioned per working directory filesystem device and inode at `$HOME/.config/mllm/history/{dev}_{ino}/chat.jsonl` with zero cross-mount collision risk.
+- **Fixed Internal History Path**: Removed `chat_file` configuration from `mllm.yaml`; runtime paths are managed internally and interpolated dynamically into system instructions.
+- **Alt Prefix Navigation**: Adopted `alt` / `alt+<key>` prefix chords with direct unprefix navigation.
+- **Streamlined CLI**: Removed `mllm init` in favor of auto-scaffolding; eliminated legacy compatibility layers (`ctrl+b`, `{working_dir_inode}`, variable aliases, and cwd auto-migration).
+
 ---
 
 ### Verification & Quality Gates
-- **Unit & Integration Tests**: 80 passed / 0 failed (55 unit + 25 integration) including routing isolation and hostile-log startup replay sanitization.
+- **Unit & Integration Tests**: 83 passed / 0 failed (55 unit + 28 integration) including rich text parsing, mention routing, and cross-mount collision isolation.
 - **Compiler Hardening**: `#![deny(clippy::indexing_slicing)]` and `#![deny(clippy::string_slice)]` enforced across `src/rich_text.rs`.
 - **Lint Audit Attribution**: Confirmed 35 pre-existing compiler/clippy lints under Rust 1.96.0 toolchain drift (31 `collapsible_if`, 1 bool literal, 1 `div_ceil`, 1 const static lifetime, 1 clamp pattern) with zero regressions or new lint classes introduced by `eaed037` and `fff3ab1`. Scheduled for dedicated maintenance pass.
 
