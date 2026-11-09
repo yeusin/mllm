@@ -31,6 +31,11 @@ Multi-LLM is a Rust-based terminal multiplexer and multi-agent orchestration TUI
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Vendored vt100 parser**: mllm vendors `vt100 0.18.1` under `vendor/vt100/` with a minimal
+> four-arm patch (cursor save/restore `CSI s`/`u`, IND/NEL `ESC D`/`E`) that upstream lacks and
+> OpenTUI-driven TUIs require — without it, panes redraw on wrong rows. See
+> [docs/vendored-vt100.md](docs/vendored-vt100.md) for rationale, upstream sync, the pane-fidelity replay harness, and known limitations.
+
 ### 1.2 Layout Rules & Symmetrical Partitioning
 
 Multi-LLM dynamically and symmetrically arranges arbitrary client panes around the central Coordinator without requiring pre-set window templates:

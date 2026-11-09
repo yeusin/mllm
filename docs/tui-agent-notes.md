@@ -119,9 +119,10 @@ To later disable: **remove the `env OPENTUI_FORCE_WCWIDTH=1` prefix entirely** �
 ## 5. Verification
 
 - 4 **unit** tests cover the pane fix: query responder (×3, `src/pty.rs::tests`) and wide-glyph
-  widget (×1, `src/ui.rs::tests`), counted within the 63-unit bucket. Suite total at the time of
-  writing: 99/99 (63 unit + 32 integration + 4 audit regression — the regression bucket lives in
-  `tests/reviewer_audit_regressions.rs` and covers the Protocol v1.3 audit findings, not the pane
-  fix).
+  widget (×1, `src/ui.rs::tests`); 3 more lock the vendored vt100 patch itself
+  (`test_vt100_patch_*`, `src/pty.rs::tests` — see `docs/vendored-vt100.md`), all counted within
+  the 64-unit bucket. Suite total at the time of writing: 100/100 (64 unit + 32 integration +
+  4 audit regression — the regression bucket lives in `tests/reviewer_audit_regressions.rs` and
+  covers the Protocol v1.3 audit findings, not the pane fix).
 - The OSC 66 regression sample mirrors the real probe draw shape (`w=2`), with a comment
   explaining the CPR-trick detection (§3.1).
