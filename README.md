@@ -379,8 +379,8 @@ The Multi-LLM test suite enforces complete verification across all subsystems:
 cargo test
 ```
 
-### Verified Test Suite (91 Tests Passing)
-- **Unit Tests (`src/lib.rs` - 55 tests)**:
+### Verified Test Suite (100 Tests Passing)
+- **Unit Tests (`src/lib.rs` - 64 tests)**:
   - `app::tests::test_mouse_selection_clamping_to_pane`
   - `app::tests::test_base64_encode_and_screen_text_extraction`
   - `app::tests::test_pageup_pagedown_scrollback`
@@ -403,6 +403,7 @@ cargo test
   - `update::tests::test_checksum_verification_fail_paths`
   - `update::tests::test_extracted_payload_validation_fail_paths`
   - `update::tests::test_broken_symlink_target_handling`
+  - `pty::tests::test_vt100_patch_cursor_save_restore` / `test_vt100_patch_ind_nel` / `test_vt100_patch_ind_scrolls_at_bottom` (vendored vt100 patch regression)
 - **Reviewer Audit Regression Tests (`tests/reviewer_audit_regressions.rs` - 4 tests)**: permanent coverage of the nudge-echo, early-scrape, watchdog-clearing and UTF-8 truncation defects.
 - **Integration Tests (`tests/integration_tests.rs` - 32 tests)**:
   - `test_task_dispatch_mandatory_protocol_suffix`

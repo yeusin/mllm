@@ -2,6 +2,36 @@
 
 ---
 
+## Release v0.5.1 (November 2026)
+
+**Release Tag**: [`v0.5.1`](https://github.com/yeusin/mllm/releases/tag/v0.5.1)  
+**Theme**: Vendored vt100 Parser & Pane-Fidelity Hardening
+
+Full-screen TUI agents (OpenCode/OpenTUI and similar) redraw using cursor sequences that upstream `vt100 0.18.1` silently ignores: `CSI s`, `CSI u`, `ESC D` and `ESC E`. Inside mllm panes the parser's cursor diverged from a real terminal's, so client redraws landed one row too high and overwrote or erased existing lines. v0.5.1 ships the fix: a vendored `vt100 0.18.1` under `vendor/vt100/` with a minimal four-arm patch (commit `d203798`), plus the replay harness and documentation that keep it auditable (harness in `d203798`; reference doc and README pointer in `d9c9de5`). Full reference: [`docs/vendored-vt100.md`](docs/vendored-vt100.md).
+
+### Fixes
+- **Cursor save/restore**: `CSI s` / `CSI u` now save and restore the cursor (SCOSC/SCORC) in the vendored parser, so OpenTUI redraws land on the correct rows.
+- **Line motion**: `ESC D` (IND) moves down and scrolls at the bottom margin like a real terminal instead of being dropped; `ESC E` (NEL) is handled for completeness.
+- **PTY startup handshake**: terminal queries from TUI clients are answered (`CSI 6n` with the parser's cursor position, `OSC 10/11` foreground/background colors, XTGETTCAP declined as unsupported), so clients no longer stall or degrade while waiting on probes.
+- **Wide glyphs**: the pane widget skips wide-character continuation cells, so emoji/icons render both halves intact under ratatui's diff-based redraw.
+
+### Documentation
+- **New `docs/vendored-vt100.md`**: why the parser is vendored, the patch itself, the upstream sync procedure (`diff -ru` against the local cargo registry cache; re-apply the four arms; re-run the regression tests), and the fork citation policy — when consulting the community fork, read the published `vt100-psmux 0.16.13` crate, not the stale GitHub `main` branch (and note the fork carries no IND/NEL arms).
+- **README §1.1 pointer** to the new page, and corrected suite counts in `README.md` and `docs/tui-agent-notes.md`.
+
+### Pane-fidelity verification
+- **Opt-in replay harness** (no-ops without environment variables, so CI is unaffected): `REPLAY_CAPTURE` renders a raw capture through the real parser → widget → ratatui-diff path; `REPLAY_MULTIFRAME` splits a capture at synchronized-frame markers (`ESC[?2026l`) and emits the resulting host-byte stream for comparison.
+- **Ground truth**: the wide-char-aware reference emulator `scripts/ref_emu.py`, with capture tooling in `scripts/capture_raw.py`, `scripts/capture_bidir.py` and `scripts/capture_session.py` (`CAPTURE_*` environment variables).
+- The validating run replayed 83 synchronized frames (117×49 pane geometry) identical to ground truth with the patch applied; that frame count is not a reproducible invariant — reproduction is the loop itself: capture a session, replay it, compare against the reference emulator.
+
+### Known limitations
+- SGR 5 (blink), 8 (conceal) and 9 (strikethrough) are not rendered. SGR 8 text intended to be hidden renders **visibly**: concealed content is not protected in panes, and would also leak through selection and clipboard export today, and any future search. No captured client emits SGR 5/8/9.
+- SGR 2 (dim) is parsed but not painted; dim text renders at normal intensity.
+- `CSI s` is treated as save-cursor (SCOSC) unconditionally: DECLRMM (`?69`) / DECSLRM margin mode is unsupported upstream, and no mllm client sets it.
+- Verification: 100 tests pass (64 unit, 32 integration, 4 audit regression), including three new vt100 patch regression tests (`test_vt100_patch_cursor_save_restore`, `test_vt100_patch_ind_nel`, `test_vt100_patch_ind_scrolls_at_bottom`). Documentation content audited line-by-line by the Reviewer.
+
+---
+
 ## Release v0.5.0 (November 2026)
 
 **Release Tag**: [`v0.5.0`](https://github.com/yeusin/mllm/releases/tag/v0.5.0)  

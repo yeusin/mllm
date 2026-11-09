@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "mllm"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arboard",
