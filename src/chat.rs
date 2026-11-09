@@ -22,6 +22,10 @@ pub struct ChatMessage {
     pub role: String,
     pub message: String,
     pub timestamp: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 }
 
 impl ChatMessage {
@@ -33,6 +37,8 @@ impl ChatMessage {
             role: "Human Operator".to_string(),
             message,
             timestamp: current_timestamp(),
+            fallback: None,
+            superseded_by: None,
         }
     }
 
@@ -44,6 +50,31 @@ impl ChatMessage {
             role: "Coordinator".to_string(),
             message,
             timestamp: current_timestamp(),
+            fallback: None,
+            superseded_by: None,
+        }
+    }
+
+    pub fn new_fallback(
+        task_ref: &str,
+        sender: String,
+        role: String,
+        message: String,
+    ) -> Self {
+        let deterministic_id = Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("{}:{}:fallback", task_ref, sender).as_bytes(),
+        )
+        .to_string();
+        Self {
+            id: deterministic_id,
+            reply_to: Some(task_ref.to_string()),
+            sender,
+            role,
+            message,
+            timestamp: current_timestamp(),
+            fallback: Some(true),
+            superseded_by: None,
         }
     }
 }
@@ -141,20 +172,49 @@ pub fn load_new_messages_from_offset(
         match serde_json::from_str::<ChatMessage>(trimmed) {
             Ok(msg) => messages.push(msg),
             Err(e) => {
-                // Route corrupt records to dead-letter queue
-                let dead_letter_path = path.with_extension("dead_letter.jsonl");
-                if let Ok(mut dl_file) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&dead_letter_path)
-                {
-                    let _ = writeln!(dl_file, "{}", trimmed);
+                // R7: Salvage pass for fused records (e.g. crash mid-write without newline followed by next write)
+                let mut salvaged = false;
+                if trimmed.contains("}{") {
+                    let parts: Vec<&str> = trimmed.split("}{").collect();
+                    let mut temp_msgs = Vec::new();
+                    let mut all_valid = true;
+                    for (i, part) in parts.iter().enumerate() {
+                        let json_str = if i == 0 {
+                            format!("{}}}", part)
+                        } else if i == parts.len() - 1 {
+                            format!("{{{part}")
+                        } else {
+                            format!("{{{part}}}")
+                        };
+                        if let Ok(m) = serde_json::from_str::<ChatMessage>(&json_str) {
+                            temp_msgs.push(m);
+                        } else {
+                            all_valid = false;
+                            break;
+                        }
+                    }
+                    if all_valid && !temp_msgs.is_empty() {
+                        messages.extend(temp_msgs);
+                        salvaged = true;
+                    }
                 }
-                eprintln!(
-                    "Warning: Malformed JSONL line routed to {}: {}",
-                    dead_letter_path.display(),
-                    e
-                );
+
+                if !salvaged {
+                    // Route corrupt records to dead-letter queue
+                    let dead_letter_path = path.with_extension("dead_letter.jsonl");
+                    if let Ok(mut dl_file) = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&dead_letter_path)
+                    {
+                        let _ = writeln!(dl_file, "{}", trimmed);
+                    }
+                    eprintln!(
+                        "Warning: Malformed JSONL line routed to {}: {}",
+                        dead_letter_path.display(),
+                        e
+                    );
+                }
             }
         }
     }

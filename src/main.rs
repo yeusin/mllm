@@ -180,6 +180,9 @@ async fn main() -> Result<()> {
         // Ingest newly arrived chat log updates immediately before rendering
         app.check_chat_log_updates();
 
+        // Check watchdog for pending tasks (nudges and scrape fallbacks)
+        app.check_watchdog();
+
         // Redraw UI
         terminal.draw(|f| ui::render(f, &mut app))?;
 

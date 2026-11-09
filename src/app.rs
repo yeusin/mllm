@@ -36,6 +36,20 @@ pub struct ActiveTask {
     pub start_time: std::time::Instant,
 }
 
+#[derive(Debug, Clone)]
+pub struct WatchdogTask {
+    pub client_idx: usize,
+    pub agent_name: String,
+    pub agent_role: String,
+    pub task_ref: String,
+    pub dispatched_at: std::time::Instant,
+    pub nudge_count: u8,
+    pub last_activity_time: std::time::Instant,
+    pub last_content_hash: u64,
+    pub hash_stable_since: std::time::Instant,
+    pub last_nudge_at: Option<std::time::Instant>,
+}
+
 pub struct AppState {
     pub config: AppConfig,
     pub parsed_prefix: ParsedPrefix,
@@ -63,6 +77,8 @@ pub struct AppState {
     pub coordinator_buffer: Vec<Vec<String>>,
     pub clipboard: Option<Arc<Mutex<arboard::Clipboard>>>,
     pub active_tasks: HashMap<String, ActiveTask>,
+    pub watchdog_tasks: HashMap<String, WatchdogTask>,
+    pub last_chat_file_size: u64,
     pub render_cache: HashMap<String, (usize, Vec<ratatui::text::Line<'static>>)>,
     pub chat_cache_width: usize,
     pub chat_total_lines: usize,
@@ -149,6 +165,8 @@ impl AppState {
             coordinator_buffer: Vec::new(),
             clipboard: arboard::Clipboard::new().ok().map(|cb| Arc::new(Mutex::new(cb))),
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: initial_offset,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1047,10 +1065,14 @@ impl AppState {
             return;
         }
 
+        // Ingest latest updates before appending to prevent offset-snapshot skip race (R8)
+        self.check_chat_log_updates();
+
         let msg = ChatMessage::new_user(final_text);
         self.known_message_ids.insert(msg.id.clone());
         let _ = append_message(&self.chat_file_path, &msg);
         self.last_chat_offset = std::fs::metadata(&self.chat_file_path).map(|m| m.len()).unwrap_or(self.last_chat_offset);
+        self.last_chat_file_size = self.last_chat_offset;
         self.chat_history.push(msg.clone());
         self.active_chain_depth = 0; // Reset chain depth on new user prompt
         self.chat_scroll_offset = 0;
@@ -1062,6 +1084,15 @@ impl AppState {
     }
 
     pub fn check_chat_log_updates(&mut self) {
+        let current_size = std::fs::metadata(&self.chat_file_path).map(|m| m.len()).unwrap_or(0);
+        if current_size > self.last_chat_file_size {
+            self.last_chat_file_size = current_size;
+            let now = std::time::Instant::now();
+            for task in self.watchdog_tasks.values_mut() {
+                task.last_activity_time = now;
+            }
+        }
+
         if let Ok((new_messages, new_offset)) =
             crate::chat::load_new_messages_from_offset(&self.chat_file_path, self.last_chat_offset)
         {
@@ -1072,8 +1103,28 @@ impl AppState {
                     let is_new = !self.initial_message_ids.contains(&msg.id);
                     self.chat_history.push(msg.clone());
 
-                    // Clear thinking state for msg.sender
-                    self.active_tasks.remove(&msg.sender.to_lowercase());
+                    // Clear thinking & watchdog state only if msg replies to the tracked task_ref
+                    let sender_key = msg.sender.to_lowercase();
+                    if let Some(task) = self.watchdog_tasks.get(&sender_key) {
+                        if msg.reply_to.as_deref() == Some(&task.task_ref) {
+                            self.watchdog_tasks.remove(&sender_key);
+                            self.active_tasks.remove(&sender_key);
+                        }
+                    } else {
+                        self.active_tasks.remove(&sender_key);
+                    }
+
+                    // R3: If this message replies to a previous turn that had a fallback, mark superseded
+                    if let Some(ref reply_id) = msg.reply_to {
+                        for hist_msg in &mut self.chat_history {
+                            if hist_msg.fallback == Some(true)
+                                && hist_msg.reply_to.as_deref() == Some(reply_id)
+                                && hist_msg.sender.trim().eq_ignore_ascii_case(msg.sender.trim())
+                            {
+                                hist_msg.superseded_by = Some(msg.id.clone());
+                            }
+                        }
+                    }
 
                     if is_new {
                         self.route_message(&msg);
@@ -1157,6 +1208,11 @@ impl AppState {
     }
 
     pub fn route_message_with_delay(&mut self, msg: &ChatMessage, base_delay_ms: u64) {
+        // R4: Fallback scraped messages must not route tasks or extract mentions
+        if msg.fallback == Some(true) {
+            return;
+        }
+
         // Chain depth limit check
         if self.active_chain_depth >= self.max_chain_depth {
             let warn_msg = ChatMessage::new_coordinator(
@@ -1183,19 +1239,41 @@ impl AppState {
                     if !msg.sender.eq_ignore_ascii_case("Coordinator")
                         && !msg.sender.eq_ignore_ascii_case("System")
                     {
+                        let now = std::time::Instant::now();
                         self.active_tasks.insert(
                             client.name.to_lowercase(),
                             ActiveTask {
                                 agent_name: client.name.clone(),
                                 agent_role: client.role.clone(),
                                 task_ref: msg.id.clone(),
-                                start_time: std::time::Instant::now(),
+                                start_time: now,
+                            },
+                        );
+                        let initial_hash = client.current_screen_hash();
+                        self.watchdog_tasks.insert(
+                            client.name.to_lowercase(),
+                            WatchdogTask {
+                                client_idx: idx,
+                                agent_name: client.name.clone(),
+                                agent_role: client.role.clone(),
+                                task_ref: msg.id.clone(),
+                                dispatched_at: now,
+                                nudge_count: 0,
+                                last_activity_time: now,
+                                last_content_hash: initial_hash,
+                                hash_stable_since: now,
+                                last_nudge_at: None,
                             },
                         );
                     }
+                    let chat_str = self.chat_file_path.display().to_string();
+                    let mandatory_suffix = format!(
+                        "\n\n[MANDATORY PROTOCOL]: Your turn is NOT complete until you append a valid single-line JSON object to {} with \"reply_to\": \"{}\", \"sender\": \"{}\", \"role\": \"{}\". Terminal output alone is ignored by the coordinator.",
+                        chat_str, msg.id, client.name, client.role
+                    );
                     let task_prompt = format!(
-                        "Task from {} ({}): {} [Ref: {}]",
-                        msg.sender, msg.role, sanitized_content, msg.id
+                        "Task from {} ({}): {} [Ref: {}]{}",
+                        msg.sender, msg.role, sanitized_content, msg.id, mandatory_suffix
                     );
                     // Atomic composite prompt: prepend startup instructions (general + role) if client hasn't been initialized yet
                     let prompt = if !self.initialized_clients.contains(&idx) {
@@ -1203,7 +1281,6 @@ impl AppState {
                         if let Some(client_cfg) = self.config.clients.get(idx) {
                             let inst = client_cfg.instructions.trim();
                             let mut vars = self.config.instruction_vars_for(client_cfg);
-                            let chat_str = self.chat_file_path.display().to_string();
                             vars.insert("chat_file".to_string(), chat_str.clone());
                             vars.insert("chatfile".to_string(), chat_str);
                             let startup_instructions = build_startup_instructions_with_vars(
@@ -1227,10 +1304,195 @@ impl AppState {
         }
     }
 
+    pub fn check_watchdog(&mut self) {
+        if self.watchdog_tasks.is_empty() {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+
+        // 1. Sync screen content changes from PTY
+        for task in self.watchdog_tasks.values_mut() {
+            if let Some(client) = self.clients.get(task.client_idx) {
+                let current_hash = client.current_screen_hash();
+                if current_hash != task.last_content_hash {
+                    task.last_content_hash = current_hash;
+                    task.hash_stable_since = now;
+
+                    // If a nudge was sent within the last 3 seconds, the screen mutation
+                    // is the echo of the nudge itself into the terminal composer.
+                    // Do not reset the idle window or nudge_count on nudge echoes!
+                    let is_nudge_echo = task
+                        .last_nudge_at
+                        .map(|t| now.duration_since(t).as_secs() < 3)
+                        .unwrap_or(false);
+
+                    if !is_nudge_echo {
+                        task.last_activity_time = now;
+                        task.nudge_count = 0; // True screen mutation resets idle window and nudge count
+                    }
+                }
+            }
+        }
+
+        // 2. Identify completed or actionable tasks
+        let mut to_remove = Vec::new();
+        let mut nudges_to_send = Vec::new();
+        let mut fallbacks_to_execute = Vec::new();
+
+        for (key, task) in &self.watchdog_tasks {
+            // Dedup check (§7): if reply already exists in chat_history, clear task
+            let already_replied = self.chat_history.iter().any(|m| {
+                m.reply_to.as_deref() == Some(&task.task_ref)
+                    && m.sender.trim().eq_ignore_ascii_case(task.agent_name.trim())
+            });
+            if already_replied {
+                to_remove.push(key.clone());
+                continue;
+            }
+
+            // Check 15s grace floor post-dispatch
+            if task.dispatched_at.elapsed().as_secs() < 15 {
+                continue;
+            }
+
+            let t_idle = task.last_activity_time.elapsed().as_secs();
+            let screen_stable_secs = task.hash_stable_since.elapsed().as_secs();
+
+            // Check early prompt restoration path (T_idle < 55s, stable screen >= 2s, quiet >= 10s, prompt regex match)
+            let is_early_restoration = if t_idle < 55 && t_idle >= 10 && screen_stable_secs >= 2 {
+                if let Some(client) = self.clients.get(task.client_idx) {
+                    let screen_text = client.get_screen_text();
+                    let bottom_lines: Vec<&str> = screen_text.lines().rev().filter(|l| !l.trim().is_empty()).take(3).collect();
+                    bottom_lines.iter().any(|l| {
+                        let trimmed = l.trim();
+                        trimmed == ">" || trimmed == "$" || trimmed == "❯" || trimmed == "›" || trimmed == "%"
+                            || trimmed.starts_with("> ") || trimmed.starts_with("$ ") || trimmed.starts_with("❯ ")
+                            || trimmed.ends_with("> ") || trimmed.ends_with("$ ") || trimmed.ends_with("❯ ")
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if is_early_restoration {
+                fallbacks_to_execute.push(key.clone());
+            } else if t_idle >= 55 && task.nudge_count == 2 {
+                // Hard timeout path (T_idle >= 55s after 2 nudges, stable screen >= 2s)
+                if screen_stable_secs >= 2 {
+                    fallbacks_to_execute.push(key.clone());
+                }
+            } else if t_idle >= 40 && task.nudge_count == 1 {
+                nudges_to_send.push((key.clone(), 2));
+            } else if t_idle >= 25 && task.nudge_count == 0 {
+                nudges_to_send.push((key.clone(), 1));
+            }
+        }
+
+        for key in to_remove {
+            self.watchdog_tasks.remove(&key);
+            self.active_tasks.remove(&key);
+        }
+
+        for (key, nudge_num) in nudges_to_send {
+            if let Some(task) = self.watchdog_tasks.get_mut(&key) {
+                task.nudge_count = nudge_num;
+                task.last_nudge_at = Some(now);
+                let prompt_text = if nudge_num == 1 {
+                    format!(
+                        "[Coordinator Alert]: Task [{}] response has not been logged. Please append your response as a JSON line to {} with \"reply_to\": \"{}\" to complete your turn.",
+                        task.task_ref, self.chat_file_path.display(), task.task_ref
+                    )
+                } else {
+                    format!(
+                        "[Coordinator Final Alert]: Task [{}] remains unlogged. If not appended to {} shortly, your terminal output will be automatically captured via scrape fallback.",
+                        task.task_ref, self.chat_file_path.display()
+                    )
+                };
+                if let Some(client) = self.clients.get(task.client_idx) {
+                    client.send_nudge(&prompt_text);
+                }
+            }
+        }
+
+        for key in fallbacks_to_execute {
+            self.execute_scrape_fallback(&key);
+        }
+    }
+
+    pub fn execute_scrape_fallback(&mut self, agent_key: &str) {
+        let Some(task) = self.watchdog_tasks.remove(agent_key) else {
+            return;
+        };
+        self.active_tasks.remove(agent_key);
+
+        // Re-check under lock (§5.4 / §6)
+        self.check_chat_log_updates();
+        let already_replied = self.chat_history.iter().any(|m| {
+            m.reply_to.as_deref() == Some(&task.task_ref)
+                && m.sender.trim().eq_ignore_ascii_case(task.agent_name.trim())
+        });
+        if already_replied {
+            return;
+        }
+
+        // Extract screen text
+        let raw_text = if let Some(client) = self.clients.get(task.client_idx) {
+            client.get_screen_text()
+        } else {
+            String::new()
+        };
+
+        // Clean and cap extracted text
+        let cleaned_text = clean_scraped_terminal_text(&raw_text);
+        let message_content = if cleaned_text.is_empty() {
+            format!("[Fallback]: Agent '{}' completed turn without writing output.", task.agent_name)
+        } else {
+            cleaned_text
+        };
+
+        let fallback_msg = ChatMessage::new_fallback(
+            &task.task_ref,
+            task.agent_name.clone(),
+            task.agent_role.clone(),
+            message_content,
+        );
+
+        self.known_message_ids.insert(fallback_msg.id.clone());
+        let _ = append_message(&self.chat_file_path, &fallback_msg);
+        self.last_chat_offset = std::fs::metadata(&self.chat_file_path).map(|m| m.len()).unwrap_or(self.last_chat_offset);
+        self.last_chat_file_size = self.last_chat_offset;
+        self.chat_history.push(fallback_msg);
+        self.chat_scroll_offset = 0;
+    }
+
     pub fn shutdown(&mut self) {
         for client in &mut self.clients {
             client.terminate();
         }
+    }
+}
+
+pub fn clean_scraped_terminal_text(raw: &str) -> String {
+    let mut lines: Vec<&str> = raw.lines().collect();
+    while let Some(last) = lines.last() {
+        if last.trim().is_empty() {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    let joined = lines.join("\n");
+    if joined.len() > 32768 {
+        let mut boundary = 32768;
+        while boundary > 0 && !joined.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        joined[..boundary].to_string()
+    } else {
+        joined
     }
 }
 
@@ -1560,6 +1822,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1725,6 +1989,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1823,6 +2089,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1937,6 +2205,8 @@ mod tests {
             ],
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -2008,6 +2278,8 @@ mod tests {
             ],
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,

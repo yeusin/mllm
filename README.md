@@ -254,6 +254,20 @@ Multi-LLM v0.2.0 replaces cold-start chat broadcast replay with **Atomic Lazy In
 
 ---
 
+### 3.6 Mandatory Reply Logging & Watchdog
+
+Every dispatched task ends with a `[MANDATORY PROTOCOL]` suffix with pre-filled `reply_to`, `sender`, `role` and chat file path. A turn is complete only when a reply line with a matching `reply_to` and `sender` is appended to the shared log; terminal output alone is ignored.
+
+If a client goes idle without logging, the coordinator escalates (idle means no screen change and no log growth):
+
+| Idle time | Action |
+| :-- | :-- |
+| 25s | Nudge 1 |
+| 40s | Nudge 2 (final notice) |
+| 55s | Scrape fallback |
+
+The scrape fallback copies the client's visible screen into the log as a message with `"fallback": true`. It uses a deterministic ID so duplicates collapse, and it is never routed to peers. If the real reply arrives later, the fallback is collapsed in the UI. Agents should write each reply as one complete line in a single write. See [docs/task-dispatch-protocol.md](docs/task-dispatch-protocol.md) for the full specification. The `mllm-reply` helper command is planned and is not yet available.
+
 ## 4. PTY & Terminal Emulation Engine
 
 ### 4.1 Cross-Platform PTY Subsystem
@@ -360,7 +374,7 @@ The Multi-LLM test suite enforces complete verification across all subsystems:
 cargo test
 ```
 
-### Verified Test Suite (83 Tests Passing)
+### Verified Test Suite (91 Tests Passing)
 - **Unit Tests (`src/lib.rs` - 55 tests)**:
   - `app::tests::test_mouse_selection_clamping_to_pane`
   - `app::tests::test_base64_encode_and_screen_text_extraction`
@@ -384,7 +398,12 @@ cargo test
   - `update::tests::test_checksum_verification_fail_paths`
   - `update::tests::test_extracted_payload_validation_fail_paths`
   - `update::tests::test_broken_symlink_target_handling`
-- **Integration Tests (`tests/integration_tests.rs` - 28 tests)**:
+- **Reviewer Audit Regression Tests (`tests/reviewer_audit_regressions.rs` - 4 tests)**: permanent coverage of the nudge-echo, early-scrape, watchdog-clearing and UTF-8 truncation defects.
+- **Integration Tests (`tests/integration_tests.rs` - 32 tests)**:
+  - `test_task_dispatch_mandatory_protocol_suffix`
+  - `test_watchdog_fallback_and_idempotent_uuid5`
+  - `test_watchdog_nudge_echo_progression`
+  - `test_salvage_pass_fused_records`
   - `test_chat_message_json_protocol`
   - `test_config_loading_and_defaults`
   - `test_app_init_stops_and_errors_on_invalid_command`

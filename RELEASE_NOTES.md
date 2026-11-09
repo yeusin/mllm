@@ -2,6 +2,33 @@
 
 ---
 
+## Release v0.5.0 (November 2026)
+
+**Release Tag**: [`v0.5.0`](https://github.com/yeusin/mllm/releases/tag/v0.5.0)  
+**Theme**: Mandatory Reply Logging & Watchdog Fallback (Task Dispatch & Chat Logging Protocol v1.3)
+
+Agents sometimes finished a turn in the terminal without appending a reply to the shared chat log, leaving the coordinator waiting for the 600s UI timeout. This release enforces logging from the coordinator side. Full specification: [`docs/task-dispatch-protocol.md`](docs/task-dispatch-protocol.md).
+
+### Features
+- **Per-turn protocol suffix**: every dispatched task, not just the first, ends with a mandatory logging directive with pre-filled `reply_to`, `sender`, `role` and chat file path.
+- **Idle watchdog**: a client with no screen change and no log growth gets Nudge 1 at 25s and Nudge 2 at 40s (through the same typing queue as dispatch). A 15s post-dispatch grace applies.
+- **Scrape fallback**: at 55s idle (or earlier on a strict standalone prompt match) the visible screen is logged on the agent's behalf with `"fallback": true`. Fallback IDs are deterministic (UUIDv5), fallbacks are never routed to peers, and a late real reply marks the fallback as superseded in the UI.
+- **Schema**: `ChatMessage` gains optional `fallback` and `superseded_by` fields. Both are omitted when unset, so existing logs and parsers keep working. `superseded_by` is in memory only; the log file is never rewritten.
+
+### Fixes
+- Salvage pass splits fused `}{` records instead of dead-lettering both.
+- The coordinator now ingests pending log updates before appending its own message, so an agent line written in that gap is no longer skipped.
+- The watchdog is cleared only by a reply to the tracked task, not by any message from that sender.
+- Truncation of scraped text no longer risks splitting a multi-byte character.
+
+### Known limitations
+- The `mllm-reply` helper command is not yet available. Agents write the JSON line themselves; each reply must be a single complete line in one write. On network filesystems, interleaving is possible.
+- Watchdog timers start at dispatch routing, not at paste completion (absorbed by the 15s grace).
+- Sender matching is case-insensitive and trims surrounding whitespace; the unrecognized-sender warning is not implemented.
+- Verification: 91 tests pass (55 unit, 32 integration, 4 audit regression). Implementation audited and approved by the Reviewer.
+
+---
+
 ## Release v0.4.0 (November 2026)
 
 **Release Tag**: [`v0.4.0`](https://github.com/yeusin/mllm/releases/tag/v0.4.0)  

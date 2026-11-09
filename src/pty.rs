@@ -18,6 +18,7 @@ pub struct ClientPane {
     pub child: Box<dyn Child + Send + Sync>,
     pub vt_parser: Arc<Mutex<Parser>>,
     pub is_busy: Arc<AtomicBool>,
+    pub last_activity_ms: Arc<std::sync::atomic::AtomicU64>,
     pub event_tx: UnboundedSender<()>,
     typing_tx: UnboundedSender<(String, std::time::Instant)>,
 }
@@ -91,19 +92,35 @@ impl ClientPane {
         let raw_writer = pair.master.take_writer()?;
         let writer = Arc::new(Mutex::new(raw_writer));
 
+        let last_activity_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
         // Background reader thread
         let parser_clone = Arc::clone(&vt_parser);
         let event_tx_clone = event_tx.clone();
+        let last_activity_clone = Arc::clone(&last_activity_ms);
         std::thread::Builder::new()
             .name(format!("pty-reader-{}", number))
             .spawn(move || {
                 let mut buf = [0u8; 4096];
+                let mut last_hash: u64 = 0;
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
                             if let Ok(mut parser) = parser_clone.lock() {
                                 parser.process(&buf[..n]);
+                                use std::hash::{DefaultHasher, Hash, Hasher};
+                                let mut hasher = DefaultHasher::new();
+                                parser.screen().contents().hash(&mut hasher);
+                                let h = hasher.finish();
+                                if h != last_hash {
+                                    last_hash = h;
+                                    let now_ms = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis() as u64)
+                                        .unwrap_or(0);
+                                    last_activity_clone.store(now_ms, Ordering::SeqCst);
+                                }
                             }
                             let _ = event_tx_clone.send(());
                         }
@@ -160,6 +177,7 @@ impl ClientPane {
             child,
             vt_parser,
             is_busy,
+            last_activity_ms,
             event_tx,
             typing_tx,
         })
@@ -195,6 +213,38 @@ impl ClientPane {
     pub fn simulate_keyboard_input_with_delay(&self, prompt: &str, initial_delay_ms: u64) {
         let target_time = std::time::Instant::now() + Duration::from_millis(initial_delay_ms);
         let _ = self.typing_tx.send((prompt.to_string(), target_time));
+    }
+
+    pub fn send_nudge(&self, prompt: &str) {
+        // Nudges MUST go through typing_tx (R5)
+        let _ = self.typing_tx.send((prompt.to_string(), std::time::Instant::now()));
+    }
+
+    pub fn current_screen_hash(&self) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        if let Ok(parser) = self.vt_parser.lock() {
+            let mut hasher = DefaultHasher::new();
+            parser.screen().contents().hash(&mut hasher);
+            hasher.finish()
+        } else {
+            0
+        }
+    }
+
+    pub fn get_screen_text(&self) -> String {
+        if let Ok(parser) = self.vt_parser.lock() {
+            parser.screen().contents()
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn is_cursor_visible(&self) -> bool {
+        if let Ok(parser) = self.vt_parser.lock() {
+            !parser.screen().hide_cursor()
+        } else {
+            false
+        }
     }
 
     pub fn check_status(&mut self) -> Option<u32> {

@@ -1040,6 +1040,8 @@ async fn test_realtime_thinking_indicator_lifecycle() {
         role: "Reviewer & Auditor".to_string(),
         message: "Memory safety audit completed. Zero leaks detected.".to_string(),
         timestamp: 1794057000,
+        fallback: None,
+        superseded_by: None,
     };
     mllm::chat::append_message(&chat_file, &reply).unwrap();
 
@@ -1106,6 +1108,8 @@ async fn test_multi_agent_individual_finish_immediate_display() {
         role: "Lead Architect".to_string(),
         message: "Architecture verified.".to_string(),
         timestamp: 1794057100,
+        fallback: None,
+        superseded_by: None,
     };
     mllm::chat::append_message(&chat_file, &arch_reply).unwrap();
 
@@ -1124,6 +1128,8 @@ async fn test_multi_agent_individual_finish_immediate_display() {
         role: "Reviewer & Auditor".to_string(),
         message: "Review complete. All clear.".to_string(),
         timestamp: 1794057150,
+        fallback: None,
+        superseded_by: None,
     };
     mllm::chat::append_message(&chat_file, &rev_reply).unwrap();
 
@@ -1495,6 +1501,8 @@ fn test_partial_tail_incremental_reader_integrity() {
         role: "Operator".to_string(),
         message: "First message".to_string(),
         timestamp: 1000,
+        fallback: None,
+        superseded_by: None,
     };
     let mut file = std::fs::File::create(&log_path).unwrap();
     writeln!(file, "{}", serde_json::to_string(&msg1).unwrap()).unwrap();
@@ -1535,6 +1543,192 @@ fn test_partial_tail_incremental_reader_integrity() {
     assert_eq!(all_msgs.len(), 2, "load_messages must tolerate trailing partial line");
 
     drop(file);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[tokio::test]
+async fn test_task_dispatch_mandatory_protocol_suffix() {
+    let tmp_dir = std::env::temp_dir().join(format!("test_suffix_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let chat_file = tmp_dir.join("chat.jsonl");
+
+    let cfg = mllm::config::AppConfig {
+        prefix_key: "alt".to_string(),
+        general_instructions: "Protocol instructions".to_string(),
+        clients: vec![mllm::config::ClientConfig {
+            number: 1,
+            name: "Architect".to_string(),
+            role: "Lead Architect".to_string(),
+            command: "sh -c 'sleep 60'".to_string(),
+            instructions: "Lead architecture".to_string(),
+            extra_args: vec![],
+        }],
+    };
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = mllm::app::AppState::new(cfg, Some(&chat_file), event_tx).unwrap();
+
+    let user_msg = mllm::chat::ChatMessage::new_user("@Architect Check protocol suffix".to_string());
+    app.route_message(&user_msg);
+
+    assert!(app.active_tasks.contains_key("architect"));
+    assert!(app.watchdog_tasks.contains_key("architect"));
+    let wd = app.watchdog_tasks.get("architect").unwrap();
+    assert_eq!(wd.task_ref, user_msg.id);
+    assert_eq!(wd.nudge_count, 0);
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[tokio::test]
+async fn test_watchdog_fallback_and_idempotent_uuid5() {
+    let tmp_dir = std::env::temp_dir().join(format!("test_wd_fallback_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let chat_file = tmp_dir.join("chat.jsonl");
+
+    let cfg = mllm::config::AppConfig {
+        prefix_key: "alt".to_string(),
+        general_instructions: "Protocol instructions".to_string(),
+        clients: vec![mllm::config::ClientConfig {
+            number: 1,
+            name: "Architect".to_string(),
+            role: "Lead Architect".to_string(),
+            command: "sh -c 'sleep 60'".to_string(),
+            instructions: "Lead architecture".to_string(),
+            extra_args: vec![],
+        }],
+    };
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = mllm::app::AppState::new(cfg, Some(&chat_file), event_tx).unwrap();
+
+    let user_msg = mllm::chat::ChatMessage::new_user("@Architect Fallback test".to_string());
+    app.route_message(&user_msg);
+
+    // Simulate timeout trigger for fallback
+    app.execute_scrape_fallback("architect");
+
+    // Fallback message must be in chat_history and file
+    let fallback_msg = app.chat_history.iter().find(|m| m.fallback == Some(true)).unwrap().clone();
+    assert_eq!(fallback_msg.reply_to.as_deref(), Some(user_msg.id.as_str()));
+    assert_eq!(fallback_msg.sender, "Architect");
+
+    // Deterministic UUIDv5 check
+    let expected_uuid5 = uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_OID,
+        format!("{}:Architect:fallback", user_msg.id).as_bytes(),
+    ).to_string();
+    assert_eq!(fallback_msg.id, expected_uuid5);
+
+    // Verify non-routing invariant: fallback message does not trigger turns
+    assert_eq!(app.active_chain_depth, 1); // Only initial turn from user
+    app.route_message(&fallback_msg);
+    assert_eq!(app.active_chain_depth, 1); // Unchanged!
+
+    // Verify late agent reply supersedes fallback
+    let real_reply = mllm::chat::ChatMessage {
+        id: "real-reply-123".to_string(),
+        reply_to: Some(user_msg.id.clone()),
+        sender: "Architect".to_string(),
+        role: "Lead Architect".to_string(),
+        message: "Real output finally arrived".to_string(),
+        timestamp: mllm::chat::current_timestamp(),
+        fallback: None,
+        superseded_by: None,
+    };
+    mllm::chat::append_message(&chat_file, &real_reply).unwrap();
+    app.check_chat_log_updates();
+
+    let updated_fallback = app.chat_history.iter().find(|m| m.id == expected_uuid5).unwrap();
+    assert_eq!(updated_fallback.superseded_by.as_deref(), Some("real-reply-123"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[tokio::test]
+async fn test_watchdog_nudge_echo_progression() {
+    let tmp_dir = std::env::temp_dir().join(format!("test_echo_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let chat_file = tmp_dir.join("chat.jsonl");
+
+    let cfg = mllm::config::AppConfig {
+        prefix_key: "alt".to_string(),
+        general_instructions: "Protocol instructions".to_string(),
+        clients: vec![mllm::config::ClientConfig {
+            number: 1,
+            name: "Architect".to_string(),
+            role: "Lead Architect".to_string(),
+            command: "sh -c 'sleep 60'".to_string(),
+            instructions: "Lead architecture".to_string(),
+            extra_args: vec![],
+        }],
+    };
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = mllm::app::AppState::new(cfg, Some(&chat_file), event_tx).unwrap();
+
+    let user_msg = mllm::chat::ChatMessage::new_user("@Architect Echo test".to_string());
+    app.route_message(&user_msg);
+
+    let task = app.watchdog_tasks.get_mut("architect").unwrap();
+    // Simulate 26 seconds of idle past 15s floor
+    task.dispatched_at = std::time::Instant::now() - std::time::Duration::from_secs(30);
+    task.last_activity_time = std::time::Instant::now() - std::time::Duration::from_secs(26);
+
+    // 1. First watchdog tick: triggers Nudge 1
+    app.check_watchdog();
+    let task = app.watchdog_tasks.get("architect").unwrap();
+    assert_eq!(task.nudge_count, 1);
+    assert!(task.last_nudge_at.is_some());
+
+    // 2. Simulate PTY screen content mutation due to nudge text echo
+    let task = app.watchdog_tasks.get_mut("architect").unwrap();
+    task.last_content_hash = 99999; // Simulates hash change from previous tick
+
+    app.check_watchdog();
+    let task = app.watchdog_tasks.get("architect").unwrap();
+    // Nudge count MUST NOT reset back to 0 on nudge echo!
+    assert_eq!(task.nudge_count, 1, "Nudge echo must not reset nudge_count to 0");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_salvage_pass_fused_records() {
+    let tmp_dir = std::env::temp_dir().join(format!("test_salvage_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let log_path = tmp_dir.join("chat.jsonl");
+
+    let msg1 = mllm::chat::ChatMessage {
+        id: "msg-salvage-1".to_string(),
+        reply_to: None,
+        sender: "User".to_string(),
+        role: "Operator".to_string(),
+        message: "First".to_string(),
+        timestamp: 1000,
+        fallback: None,
+        superseded_by: None,
+    };
+    let msg2 = mllm::chat::ChatMessage {
+        id: "msg-salvage-2".to_string(),
+        reply_to: Some("msg-salvage-1".to_string()),
+        sender: "Architect".to_string(),
+        role: "Lead Architect".to_string(),
+        message: "Second".to_string(),
+        timestamp: 1001,
+        fallback: None,
+        superseded_by: None,
+    };
+
+    // Fuse records without newline at "}{" boundary
+    let fused = format!("{}{}\n", serde_json::to_string(&msg1).unwrap(), serde_json::to_string(&msg2).unwrap());
+    std::fs::write(&log_path, fused.as_bytes()).unwrap();
+
+    let (msgs, _) = mllm::chat::load_new_messages_from_offset(&log_path, 0).unwrap();
+    assert_eq!(msgs.len(), 2, "Salvage pass must recover both fused messages");
+    assert_eq!(msgs[0].id, "msg-salvage-1");
+    assert_eq!(msgs[1].id, "msg-salvage-2");
+
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 

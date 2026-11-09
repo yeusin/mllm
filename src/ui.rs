@@ -332,7 +332,13 @@ pub fn format_chat_message(
     // 1. Header Card Line with high-contrast role pill badge & card rule
     let sender_text = format!(" {badge} {} ", msg.sender);
     let role_text = format!("[{}]", msg.role);
-    let meta_text = format!("#{short_id} {time_str}");
+    let meta_text = if msg.superseded_by.is_some() {
+        format!("#{short_id} {time_str} [SUPERSEDED]")
+    } else if msg.fallback == Some(true) {
+        format!("#{short_id} {time_str} [FALLBACK]")
+    } else {
+        format!("#{short_id} {time_str}")
+    };
 
     let mut header_spans = Vec::new();
     header_spans.push(Span::styled("─── ", Style::default().fg(Color::DarkGray)));
@@ -1150,6 +1156,8 @@ mod tests {
                     role: "Operator".to_string(),
                     message: "A ".repeat(200),
                     timestamp: 1000,
+                    fallback: None,
+                    superseded_by: None,
                 },
                 ChatMessage {
                     id: "msg2".to_string(),
@@ -1158,6 +1166,8 @@ mod tests {
                     role: "Coordinator".to_string(),
                     message: "B ".repeat(200),
                     timestamp: 1001,
+                    fallback: None,
+                    superseded_by: None,
                 },
                 ChatMessage {
                     id: "msg3".to_string(),
@@ -1166,6 +1176,8 @@ mod tests {
                     role: "Lead Architect".to_string(),
                     message: "FINAL_LATEST_MESSAGE".to_string(),
                     timestamp: 1002,
+                    fallback: None,
+                    superseded_by: None,
                 },
             ],
             known_message_ids: HashSet::new(),
@@ -1186,6 +1198,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1243,6 +1257,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1324,6 +1340,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1384,6 +1402,8 @@ mod tests {
             role: "Human Operator".to_string(),
             message: "Need a design upgrade".to_string(),
             timestamp: 1794050000,
+            fallback: None,
+            superseded_by: None,
         };
 
         let child = ChatMessage {
@@ -1393,6 +1413,8 @@ mod tests {
             role: "Brand & UI/UX Designer".to_string(),
             message: "Here is the upgraded design for @all to review.".to_string(),
             timestamp: 1794050010,
+            fallback: None,
+            superseded_by: None,
         };
 
         let history = vec![parent.clone(), child.clone()];
@@ -1467,6 +1489,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1512,6 +1536,8 @@ mod tests {
             role: "Human Operator".to_string(),
             message: "Analyze the architecture".to_string(),
             timestamp: 1794050000,
+            fallback: None,
+            superseded_by: None,
         };
 
         let task = ActiveTask {
@@ -1567,6 +1593,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1659,6 +1687,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1761,6 +1791,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
@@ -1840,6 +1872,8 @@ mod tests {
             coordinator_buffer: Vec::new(),
             clipboard: None,
             active_tasks: HashMap::new(),
+            watchdog_tasks: HashMap::new(),
+            last_chat_file_size: 0,
             render_cache: HashMap::new(),
             chat_cache_width: 0,
             chat_total_lines: 0,
