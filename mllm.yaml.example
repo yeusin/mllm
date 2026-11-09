@@ -14,7 +14,7 @@ general_instructions: |
   Shared Log Coordination & Output Protocol:
   1. Shared Log File: All clients coordinate and store outputs by appending to {chat_file}.
   2. Output Storage in Shared Log: Write each output as a single valid JSON line followed by a newline:
-     {"id": "<uuid>", "reply_to": "<task_ref_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp>}
+     {"id": "<uuid>", "reply_to": "<task_ref_or_null>", "sender": "<YourName>", "role": "<YourRole>", "message": "<Content with optional @Peer>", "timestamp": <unix_timestamp_int32>}
   3. Turn Ref Linking: Always set "reply_to" to the exact task reference specified in the [MANDATORY PROTOCOL] suffix (or null if initiating an unsolicited message). The coordinator watchdog verifies this exact task_ref to mark turns complete.
   4. Single-Line JSON & Escaping: The output MUST be a single physical line. All internal newlines in "message" must be escaped as '\n' and quotes as '\"'. Never emit raw unescaped multiline JSON.
   5. Directing Tasks & Mention Rules:
