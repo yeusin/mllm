@@ -35,9 +35,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history so `git describe` can resolve the latest tag on
+          # manual (workflow_dispatch) runs
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Extract version from release tag
+        shell: bash
+        run: |
+          # Release runs: use the published tag. Manual runs: fall back to the
+          # latest version tag reachable from the checkout.
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          fi
+          VERSION="${TAG#v}"
+          if [ -n "$VERSION" ]; then
+            echo "MLLM_VERSION=$VERSION" >> "$GITHUB_ENV"
+            echo "Injected version: $VERSION"
+          else
+            echo "No tag found; binary will fall back to manifest version"
+          fi
 
       - name: Build, package, and upload release binary
         uses: taiki-e/upload-rust-binary-action@v1

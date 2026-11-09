@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(
     name = "mllm",
-    version,
+    version = mllm::update::CURRENT_VERSION,
     about = "Tmux-Style Multi-LLM Client Coordination Tool"
 )]
 struct Cli {

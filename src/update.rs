@@ -7,7 +7,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const REPO: &str = "yeusin/mllm";
-const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Crate version shown by `--version` and the update checker.
+///
+/// Release binaries are built by `.github/workflows/release.yml`, which injects
+/// the published git tag (e.g. `v0.5.3` -> `0.5.3`) as the `MLLM_VERSION` env
+/// var at compile time. All other builds (local dev, tests) fall back to the
+/// manifest version, which stays at `0.0.0`.
+pub const CURRENT_VERSION: &str = match option_env!("MLLM_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 #[derive(Debug, Clone)]
 pub struct UpdateOptions {
@@ -553,6 +562,21 @@ pub fn run_update<W: Write>(opts: &UpdateOptions, out: &mut W) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Largest semver strictly below `version`, as a `vX.Y.Z` tag, or an empty
+    /// string when `version` is `0.0.0` (no predecessor exists).
+    fn semver_predecessor(version: &str) -> String {
+        let (maj, min, pat) = parse_semver_tuple(version).unwrap();
+        if pat > 0 {
+            format!("v{}.{}.{}", maj, min, pat - 1)
+        } else if min > 0 {
+            format!("v{}.{}.0", maj, min - 1)
+        } else if maj > 0 {
+            format!("v{}.0.0", maj - 1)
+        } else {
+            String::new()
+        }
+    }
+
     #[test]
     fn test_detect_target_triple() {
         let triple = detect_target_triple();
@@ -650,9 +674,17 @@ mod tests {
         assert_eq!(parse_semver_tuple("0.1.0").unwrap(), (0, 1, 0));
         assert_eq!(parse_semver_tuple("v2.3.4").unwrap(), (2, 3, 4));
 
+        // Downgrade notice requires target < current; dev builds bake
+        // CURRENT_VERSION = "0.0.0", which has no semver predecessor, so
+        // the notice branch is only exercised when a real version is
+        // injected (e.g. MLLM_VERSION in release builds).
+        let predecessor = semver_predecessor(CURRENT_VERSION);
+        if predecessor.is_empty() {
+            return;
+        }
         let opts = UpdateOptions {
             dry_run: true,
-            version: "v0.0.1".to_string(),
+            version: predecessor,
             ..Default::default()
         };
         let mut out = Vec::new();
